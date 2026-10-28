@@ -22,7 +22,10 @@ function limitFor(user) {
   const base = user.plan && user.plan !== 'free' && PLAN_LIMITS[user.plan] ? PLAN_LIMITS[user.plan] : free;
   const extra = user.limitOverride > base ? user.limitOverride : base;
   const comp = String(process.env.COMPLIMENTARY_EMAILS || '').toLowerCase().split(',').map((x) => x.trim()).filter(Boolean);
-  return comp.includes(String(user.email || '').toLowerCase()) ? Math.max(extra, PLAN_LIMITS.agency) : extra;
+  const email = String(user.email || '').toLowerCase();
+  // entries starting with "@" match a whole domain, e.g. "@webflow.com" for the Marketplace review team
+  const isFree = comp.some((e) => (e.startsWith('@') ? email.endsWith(e) : email === e));
+  return isFree ? Math.max(extra, PLAN_LIMITS.agency) : extra;
 }
 
 async function getUser(id) { return kv.getJSON('user:' + id); }
