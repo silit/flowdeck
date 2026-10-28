@@ -46,9 +46,9 @@ Free during beta for up to 25 sites. Not affiliated with Webflow.
 Analytics, SEO, Utilities, Marketing, Automation
 
 ## URLs
-- Website: https://flowdeck.vercel.app (custom domain later)
-- Privacy policy: https://flowdeck.vercel.app/privacy
-- Terms of service: https://flowdeck.vercel.app/terms
+- Website: https://flowdeck-pearl.vercel.app (custom domain later)
+- Privacy policy: https://flowdeck-pearl.vercel.app/privacy
+- Terms of service: https://flowdeck-pearl.vercel.app/terms
 - Support email: SUPPORT EMAIL HERE
 
 ## Logo
@@ -68,4 +68,4 @@ Free app, no in-app purchases yet. Data Client app with read-only scopes (author
 authorized_user:read, sites:read, pages:read, cms:read, forms:read
 
 ## Redirect URI
-https://flowdeck.vercel.app/callback
+https://flowdeck-pearl.vercel.app/callback
