@@ -33,7 +33,7 @@ Agencies and freelancers run ten, thirty, a hundred Webflow sites. Nobody opens 
 - Submission counts only; the content of form submissions is never read or stored.
 - Delete your account from Settings and all data goes with it.
 
-Free during beta for up to 25 sites. Not affiliated with Webflow.
+Free for up to 25 sites. Not affiliated with Webflow.
 
 ## Feature list (up to 5)
 1. Uptime and SSL monitoring for every site, every 5 minutes
@@ -46,7 +46,7 @@ Free during beta for up to 25 sites. Not affiliated with Webflow.
 Analytics, SEO, Utilities, Marketing, Automation
 
 ## URLs
-- Website: https://flowdeck.silitlabs.com (custom domain later)
+- Website: https://flowdeck.silitlabs.com
 - Privacy policy: https://flowdeck.silitlabs.com/privacy
 - Terms of service: https://flowdeck.silitlabs.com/terms
 - Support email: info@silitlabs.com
@@ -62,10 +62,20 @@ assets/logo-900.png (900x900 PNG). Upload name: flowdeck-logo.png
 5. The weekly summary email
 
 ## Review notes
-Free app, no in-app purchases yet. Data Client app with read-only scopes (authorized_user:read, sites:read, pages:read, cms:read, forms:read). The app reads site metadata, page SEO fields, form submission dates and CMS item counts, stores the OAuth token encrypted for scheduled checks, and performs HTTP uptime checks against the published site. It never writes to a site. To test: sign in, allow one or more sites, open the dashboard; uptime appears within 5 minutes; use Refresh data for forms, CMS and SEO; Settings lets you delete the account.
+Free app for up to 25 sites, no in-app purchases. Data Client app with read-only scopes (authorized_user:read, sites:read, pages:read, cms:read, forms:read). The app reads site metadata, page SEO fields, form submission dates and CMS item counts, stores the OAuth token encrypted for scheduled checks, and performs HTTP uptime checks against the published site. It never writes to a site. To test: sign in, allow one or more sites, open the dashboard; uptime appears within 5 minutes; use Refresh data for forms, CMS and SEO; Settings lets you delete the account. If the user denies access on the Webflow consent screen, Flowdeck shows an "Authorization cancelled" page with a link back to the start; nothing is stored.
 
 ## Scopes to request in the app settings
 authorized_user:read, sites:read, pages:read, cms:read, forms:read
 
 ## Redirect URI
 https://flowdeck.silitlabs.com/callback
+
+## Install URL (Data Client, direct to Webflow OAuth)
+https://webflow.com/oauth/authorize?response_type=code&client_id=a2bf2dbad02033581d75ec35cadf0663c6b4cfdfb659598e41af62ccbbc97ea2&scope=authorized_user%3Aread+sites%3Aread+pages%3Aread+cms%3Aread+forms%3Aread
+
+## Screenshot alt text
+1. Flowdeck dashboard listing six Webflow sites with uptime, SSL, publish state, form counts, CMS usage and SEO flags; one site marked Down
+2. Site detail page with 7-day uptime bars, per-form submission table, CMS collections and SEO issues by page
+3. White-label client report showing the agency name, 30-day uptime, form submissions and SEO health for one site
+4. Settings page with alert email, agency name, alert and weekly summary options and the connected Webflow accounts
+5. Weekly summary email listing every site with uptime, submissions, SEO issues and flags
