@@ -2,7 +2,7 @@
 // Uptime and SSL checks. Pure network code, no storage.
 const tls = require('tls');
 
-const UA = 'Mozilla/5.0 (compatible; Flowdeck/1.0; +https://flowdeck.app)';
+const UA = 'Mozilla/5.0 (compatible; Flowdeck/1.0; +https://flowdeck.silitlabs.com)';
 
 async function httpCheck(url, timeoutMs) {
   const started = Date.now();

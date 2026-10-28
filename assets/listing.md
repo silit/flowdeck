@@ -46,10 +46,10 @@ Free during beta for up to 25 sites. Not affiliated with Webflow.
 Analytics, SEO, Utilities, Marketing, Automation
 
 ## URLs
-- Website: https://flowdeck-pearl.vercel.app (custom domain later)
-- Privacy policy: https://flowdeck-pearl.vercel.app/privacy
-- Terms of service: https://flowdeck-pearl.vercel.app/terms
-- Support email: SUPPORT EMAIL HERE
+- Website: https://flowdeck.silitlabs.com (custom domain later)
+- Privacy policy: https://flowdeck.silitlabs.com/privacy
+- Terms of service: https://flowdeck.silitlabs.com/terms
+- Support email: hello@silitlabs.com
 
 ## Logo
 assets/logo-900.png (900x900 PNG). Upload name: flowdeck-logo.png
@@ -68,4 +68,4 @@ Free app, no in-app purchases yet. Data Client app with read-only scopes (author
 authorized_user:read, sites:read, pages:read, cms:read, forms:read
 
 ## Redirect URI
-https://flowdeck-pearl.vercel.app/callback
+https://flowdeck.silitlabs.com/callback

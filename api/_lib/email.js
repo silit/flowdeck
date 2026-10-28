@@ -4,7 +4,7 @@
 function enabled() { return !!process.env.RESEND_API_KEY; }
 
 async function send({ to, subject, html, text }) {
-  const from = process.env.EMAIL_FROM || 'Flowdeck <alerts@flowdeck.app>';
+  const from = process.env.EMAIL_FROM || 'Flowdeck <alerts@silitlabs.com>';
   if (!process.env.RESEND_API_KEY) {
     console.log('[email skipped]', to, subject);
     return { skipped: true };

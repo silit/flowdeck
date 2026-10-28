@@ -1,7 +1,7 @@
 // Renders the app pages with example data and captures Marketplace screenshots (1280x846).
 // Run: node scripts/screenshots.js   (needs playwright + sharp available)
 'use strict';
-process.env.APP_URL = process.env.APP_URL || 'https://flowdeck-pearl.vercel.app';
+process.env.APP_URL = process.env.APP_URL || 'https://flowdeck.silitlabs.com';
 process.env.SESSION_SECRET = process.env.SESSION_SECRET || 'screenshots';
 
 const fs = require('fs');
@@ -79,7 +79,7 @@ const pages = {
   '2-site-detail': html.siteDetail(user, sites[0], checksBySite.s1, now, ''),
   '3-client-report': html.report(user, sites[0], checksBySite.s1, now),
   '4-settings': html.settings(user, sites, ''),
-  '5-weekly-email': `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;background:#f4f6f8;padding:40px;font-family:Figtree,Segoe UI,Helvetica,Arial,sans-serif}.mail{max-width:900px;margin:0 auto;background:#fff;border:1px solid #dbe1e8;border-radius:12px;padding:28px}.hdr{font-size:13px;color:#5b6876;margin-bottom:18px;padding-bottom:12px;border-bottom:1px solid #dbe1e8}</style></head><body><div class="mail"><div class="hdr"><strong>From:</strong> Flowdeck &lt;alerts@flowdeck.app&gt; &nbsp; <strong>To:</strong> alerts@northstudio.co &nbsp; <strong>Subject:</strong> [Flowdeck] Weekly report: 6 sites</div>${digestHtml(user, sites.map((s) => Object.assign({}, s, { _checks: checksBySite[s.id] })), now)}</div></body></html>`
+  '5-weekly-email': `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;background:#f4f6f8;padding:40px;font-family:Figtree,Segoe UI,Helvetica,Arial,sans-serif}.mail{max-width:900px;margin:0 auto;background:#fff;border:1px solid #dbe1e8;border-radius:12px;padding:28px}.hdr{font-size:13px;color:#5b6876;margin-bottom:18px;padding-bottom:12px;border-bottom:1px solid #dbe1e8}</style></head><body><div class="mail"><div class="hdr"><strong>From:</strong> Flowdeck &lt;alerts@silitlabs.com&gt; &nbsp; <strong>To:</strong> alerts@northstudio.co &nbsp; <strong>Subject:</strong> [Flowdeck] Weekly report: 6 sites</div>${digestHtml(user, sites.map((s) => Object.assign({}, s, { _checks: checksBySite[s.id] })), now)}</div></body></html>`
 };
 
 for (const [name, content] of Object.entries(pages)) fs.writeFileSync(path.join(out, name + '.html'), content);
