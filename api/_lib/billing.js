@@ -15,9 +15,9 @@ const ACTIVE = ['active', 'on_trial', 'past_due'];
 
 function cfg() {
   return {
-    key: process.env.LEMONSQUEEZY_API_KEY || '',
+    key: String(process.env.LEMONSQUEEZY_API_KEY || '').trim(),
     store: String(process.env.LEMONSQUEEZY_STORE_ID || '').replace(/\D/g, ''), // tolerate "#123"
-    secret: process.env.LEMONSQUEEZY_WEBHOOK_SECRET || '',
+    secret: String(process.env.LEMONSQUEEZY_WEBHOOK_SECRET || '').trim(),
     base: (process.env.LEMONSQUEEZY_API_BASE || 'https://api.lemonsqueezy.com').replace(/\/+$/, '')
   };
 }
