@@ -42,7 +42,7 @@ Plan limitleri `store.js` içinde: free 3, pro 25, agency 100. Beta süresince `
    - `GET https://<adres>/cron/checks?key=<CRON_SECRET>` her 5 dakika
    - `GET https://<adres>/cron/sync?key=<CRON_SECRET>` her 15 dakika
    - `GET https://<adres>/cron/digest?key=<CRON_SECRET>` her gün 07:00 UTC
-   Zaman aşımını 60 saniye yap. İşler kendi kilidini tutar, çakışma olmaz.
+   Zaman aşımını 60 saniye yap. Her iş kendi kilidini tutar, çakışma olmaz.
 6. **Test:** `/auth` ile kendi workspace'ini bağla, 5 dakika sonra panelde uptime'ı gör, bir siteyi kasten bozmak yerine site ayarlarından "URL to check" alanına olmayan bir adres yazıp down uyarısını tetikle.
 7. **Marketplace:** `assets/listing.md`.
 
