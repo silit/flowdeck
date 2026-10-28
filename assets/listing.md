@@ -49,7 +49,7 @@ Analytics, SEO, Utilities, Marketing, Automation
 - Website: https://flowdeck.silitlabs.com (custom domain later)
 - Privacy policy: https://flowdeck.silitlabs.com/privacy
 - Terms of service: https://flowdeck.silitlabs.com/terms
-- Support email: hello@silitlabs.com
+- Support email: info@silitlabs.com
 
 ## Logo
 assets/logo-900.png (900x900 PNG). Upload name: flowdeck-logo.png
