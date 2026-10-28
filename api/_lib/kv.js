@@ -3,8 +3,15 @@
 // Every value we store is JSON. Commands are pipelined where it helps.
 
 function config() {
-  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL || '';
-  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN || '';
+  let url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL || '';
+  let token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN || '';
+  if (!url || !token) {
+    // The Vercel marketplace integration names the variables after a custom prefix, e.g. STORAGE_REST_API_URL
+    for (const k of Object.keys(process.env)) {
+      if (!url && /_REST_API_URL$/.test(k) && process.env[k]) url = process.env[k];
+      if (!token && /_REST_API_TOKEN$/.test(k) && !/READ_ONLY/.test(k) && process.env[k]) token = process.env[k];
+    }
+  }
   return url && token ? { url: url.replace(/\/+$/, ''), token } : null;
 }
 
