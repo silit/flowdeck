@@ -13,13 +13,13 @@ const alerts = require('./_lib/alerts');
 const html = require('./_lib/html');
 const { seal, open, random, timingEqual } = require('./_lib/crypto');
 const { syncSite } = require('./_lib/sync');
+const billing = require('./_lib/billing');
 
 const ENV = () => ({
   clientId: process.env.WEBFLOW_CLIENT_ID || '',
   clientSecret: process.env.WEBFLOW_CLIENT_SECRET || '',
   appUrl: (process.env.APP_URL || '').replace(/\/+$/, ''),
-  cronSecret: process.env.CRON_SECRET || '',
-  betaFreeLimit: parseInt(process.env.BETA_FREE_LIMIT || '25', 10)
+  cronSecret: process.env.CRON_SECRET || ''
 });
 
 const SESSION_TTL = 30 * 86400;
@@ -92,12 +92,7 @@ async function currentUser(req) {
 function sessionCookie(userId) {
   return cookie('fd_session', seal({ u: userId, exp: Date.now() + SESSION_TTL * 1000 }), SESSION_TTL);
 }
-function limitFor(user) {
-  const env = ENV();
-  const base = store.PLAN_LIMITS[user.plan] || store.PLAN_LIMITS.free;
-  // During the beta the free plan is raised to BETA_FREE_LIMIT sites
-  return user.plan === 'free' && env.betaFreeLimit > 0 ? env.betaFreeLimit : base;
-}
+function limitFor(user) { return store.limitFor(user); }
 
 async function handleAuth(req, res) {
   const env = ENV();
@@ -137,12 +132,12 @@ async function handleCallback(req, res) {
     if (existing && existing.userId !== user.id) { notices.push(`${meta.displayName || meta.id} is already connected by another account.`); continue; }
     let site = existing || store.newSite(meta, user.id, conn.id);
     if (existing) { store.refreshMeta(site, meta); site.connectionId = conn.id; }
-    const monitoredCount = user.siteIds.filter((id) => id !== site.id).length;
-    site.monitored = existing ? site.monitored : monitoredCount < limit;
+    else site.monitored = false; // enforceLimit below decides
     await store.saveSite(site);
     if (!user.siteIds.includes(site.id)) { user.siteIds.push(site.id); added++; }
   }
   await store.saveUser(user);
+  await store.enforceLimit(user, limit);
 
   // First data for up to 5 sites right away, so the dashboard is not empty
   const fresh = (await store.getSites(user.siteIds)).filter((s) => s.monitored && !s.syncedAt).slice(0, 5);
@@ -167,6 +162,7 @@ async function handleCallback(req, res) {
 
 async function handleApp(req, res, user) {
   const q = queryOf(req);
+  await store.enforceLimit(user, user._limit);
   const sites = await store.getSites(user.siteIds || []);
   const checksBySite = {};
   for (const s of sites) checksBySite[s.id] = await store.recentChecks(s.id);
@@ -203,7 +199,8 @@ async function handleSitePage(req, res, user) {
   const site = await ownedSite(user, q.id);
   if (!site) return send(res, 404, html.errorPage('Site not found', 'That site is not connected to your account.'));
   const recent = await store.recentChecks(site.id);
-  send(res, 200, html.siteDetail(user, site, recent, Date.now(), q.saved ? 'Settings saved.' : ''));
+  const notice = q.full ? `Your plan monitors up to ${user._limit} site${user._limit === 1 ? '' : 's'}. Pause another site or <a href="/app/settings#plan">upgrade</a>.` : (q.saved ? 'Settings saved.' : '');
+  send(res, 200, html.siteDetail(user, site, recent, Date.now(), notice));
 }
 
 async function handleSiteSettings(req, res, user) {
@@ -232,6 +229,39 @@ async function handleSiteReport(req, res, user) {
   redirect(res, '/app/site?id=' + encodeURIComponent(site.id));
 }
 
+async function handleSiteMonitor(req, res, user) {
+  const b = await readBody(req);
+  const site = await ownedSite(user, b.id);
+  if (!site) return send(res, 404, html.errorPage('Site not found', 'That site is not connected to your account.'));
+  const on = b.on === '1';
+  if (on && !site.monitored) {
+    const count = (await store.getSites(user.siteIds || [])).filter((s) => s.monitored).length;
+    if (count >= user._limit) return redirect(res, '/app/site?id=' + encodeURIComponent(site.id) + '&full=1');
+  }
+  site.monitored = on;
+  site.pausedByUser = !on;
+  await store.saveSite(site);
+  redirect(res, '/app/site?id=' + encodeURIComponent(site.id) + '&saved=1');
+}
+
+async function handleCheckout(req, res, user) {
+  const b = await readBody(req);
+  if (!billing.enabled()) return send(res, 503, html.errorPage('Upgrades are not open yet', 'Write to info@silitlabs.com and we will raise your limit.', '/app/settings'));
+  try {
+    const url = await billing.checkoutUrl(user, String(b.plan || ''), String(b.interval || ''), ENV().appUrl);
+    redirect(res, url);
+  } catch (e) {
+    console.error('[billing]', e.message);
+    send(res, 502, html.errorPage('Could not open checkout', e.message, '/app/settings'));
+  }
+}
+
+async function handlePortal(req, res, user) {
+  const url = await billing.portalUrl(user);
+  if (!url) return redirect(res, '/app/settings#plan');
+  redirect(res, url);
+}
+
 async function handleSiteRemove(req, res, user) {
   const b = await readBody(req);
   const site = await ownedSite(user, b.id);
@@ -247,7 +277,8 @@ async function handleSiteRemove(req, res, user) {
 async function handleSettingsPage(req, res, user) {
   const q = queryOf(req);
   const sites = await store.getSites(user.siteIds || []);
-  send(res, 200, html.settings(user, sites, q.saved ? 'Settings saved.' : ''));
+  const notice = q.upgraded ? 'Thanks! Your plan updates as soon as the payment is confirmed, usually within a minute.' : (q.saved ? 'Settings saved.' : '');
+  send(res, 200, html.settings(user, sites, notice, { billing: billing.enabled() }));
 }
 
 async function handleSettingsSave(req, res, user) {
@@ -326,6 +357,9 @@ module.exports = async function handler(req, res) {
       if (path === '/app/site/settings' && method === 'POST') return handleSiteSettings(req, res, user);
       if (path === '/app/site/report' && method === 'POST') return handleSiteReport(req, res, user);
       if (path === '/app/site/remove' && method === 'POST') return handleSiteRemove(req, res, user);
+      if (path === '/app/site/monitor' && method === 'POST') return handleSiteMonitor(req, res, user);
+      if (path === '/app/billing/checkout' && method === 'POST') return handleCheckout(req, res, user);
+      if (path === '/app/billing/portal' && method === 'GET') return handlePortal(req, res, user);
       if (path === '/app/settings' && method === 'GET') return handleSettingsPage(req, res, user);
       if (path === '/app/settings' && method === 'POST') return handleSettingsSave(req, res, user);
       if (path === '/app/delete' && method === 'POST') return handleDelete(req, res, user);

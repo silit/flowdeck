@@ -3,6 +3,7 @@
 const { summarize } = require('./checks');
 const { unpublishedDays, DAY } = require('./sync');
 const { PLAN_LIMITS, CMS_LIMITS } = require('./store');
+const { PLANS } = require('./billing');
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const appUrl = () => (process.env.APP_URL || '').replace(/\/+$/, '');
@@ -31,7 +32,7 @@ const CSS = `
 .top nav{display:flex;gap:16px;font-size:14px;font-weight:500}.top nav a{color:var(--fg);text-decoration:none}.top nav a:hover{color:var(--accent)}
 .head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:12px;margin-bottom:18px}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px}.stat{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px}.stat .n{font-family:"Bricolage Grotesque",Arial,sans-serif;font-size:28px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums}.stat .l{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-top:6px}
-.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px;min-width:0}.panel+.panel{margin-top:16px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px;min-width:0}.panel+.panel{margin-top:16px}.grid>.panel{margin-top:0}
 .tablewrap{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:12px}table{border-collapse:collapse;width:100%;min-width:900px;font-size:14px}th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:middle;white-space:nowrap}th{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:600}tr:last-child td{border-bottom:0}td.num{font-variant-numeric:tabular-nums}tbody tr:hover{background:var(--code)}
 .pill{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;border-radius:999px;padding:3px 9px}.pill.ok{background:var(--ok-bg);color:var(--ok)}.pill.bad{background:var(--bad-bg);color:var(--bad)}.pill.warn{background:var(--warn-bg);color:var(--warn)}.pill.off{background:var(--code);color:var(--muted)}
 .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;vertical-align:middle}.dot.ok{background:var(--ok)}.dot.bad{background:var(--bad)}.dot.off{background:var(--muted)}
@@ -43,7 +44,7 @@ const CSS = `
 input[type=text],input[type=email],input[type=url],select{width:100%;font:inherit;font-size:14px;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 11px}
 .check{display:flex;gap:10px;align-items:flex-start;font-size:14px;font-weight:400}.check input{margin-top:3px;accent-color:var(--accent)}
 .notice{border-left:4px solid var(--accent);padding:12px 14px;background:var(--surface);border-radius:8px;margin-bottom:16px}.notice.bad{border-left-color:var(--bad)}.notice.warn{border-left-color:var(--warn)}
-ul.issues{margin:6px 0 0;padding-left:18px;display:grid;gap:4px;font-size:14px}ul.issues li span{color:var(--muted)}
+ul.issues{margin:6px 0 0;padding-left:18px;display:grid;gap:4px;font-size:14px}ul.issues li span{color:var(--muted)}ul.plans{list-style:none;padding:0;gap:8px}ul.plans li{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--line)}ul.plans li span{color:inherit}
 .bars{display:flex;gap:2px;align-items:flex-end;height:44px;margin-top:8px;width:100%;overflow:hidden}.bars i{flex:1 1 0;min-width:0;background:var(--ok);border-radius:2px}.bars i.bad{background:var(--bad)}.bars i.off{background:var(--line)}
 .empty{padding:40px;text-align:center;color:var(--muted)}
 footer{margin-top:40px;padding-top:16px;border-top:1px solid var(--line);font-size:13px;color:var(--muted);display:flex;flex-wrap:wrap;gap:8px 20px}
@@ -113,7 +114,8 @@ function dashboard(user, sites, checksBySite, now, notice) {
     const p = s.data && s.data.pages;
     const name = `<a href="/app/site?id=${esc(s.id)}" style="color:inherit;text-decoration:none;font-weight:600">${esc(s.settings.client || s.name)}</a><br><span class="muted small">${esc(s.url.replace(/^https?:\/\//, ''))}</span>`;
     if (!s.monitored) {
-      return `<tr><td>${name}</td><td colspan="8"><span class="pill off">Paused</span> <span class="muted small">Over your plan limit of ${limit} sites. <a href="/app/settings#plan">Upgrade</a> to monitor it.</span></td></tr>`;
+      const why = s.pausedByUser ? `You paused monitoring. <a href="/app/site?id=${esc(s.id)}">Resume</a>` : `Over your plan limit of ${limit} site${limit === 1 ? '' : 's'}. <a href="/app/settings#plan">Upgrade</a> to monitor it.`;
+      return `<tr><td>${name}</td><td colspan="8"><span class="pill off">Paused</span> <span class="muted small">${why}</span></td></tr>`;
     }
     return `<tr>
 <td>${name}</td>
@@ -214,7 +216,8 @@ ${reportUrl ? `<p class="mono" style="word-break:break-all">${esc(reportUrl)}</p
 <label class="check"><input type="checkbox" name="alerts" value="1" ${site.settings.alerts !== false ? 'checked' : ''}> Send alerts for this site</label>
 <div class="actions"><button class="btn primary" type="submit">Save</button></div>
 </form>
-<form method="post" action="/app/site/remove" style="margin-top:14px"><input type="hidden" name="id" value="${esc(site.id)}"><button class="btn sm danger" type="submit">Remove from Flowdeck</button></form>
+<form method="post" action="/app/site/monitor" style="margin-top:14px"><input type="hidden" name="id" value="${esc(site.id)}"><input type="hidden" name="on" value="${site.monitored ? '0' : '1'}"><button class="btn sm" type="submit">${site.monitored ? 'Pause monitoring' : 'Monitor this site'}</button> <span class="muted small">${site.monitored ? 'Frees a slot on your plan.' : 'Uses one slot on your plan.'}</span></form>
+<form method="post" action="/app/site/remove" style="margin-top:10px"><input type="hidden" name="id" value="${esc(site.id)}"><button class="btn sm danger" type="submit">Remove from Flowdeck</button></form>
 </div>
 </div></div>`;
   return layout(site.name + ' · Flowdeck', body, { user });
@@ -246,7 +249,27 @@ function report(user, site, checks, now) {
   return layout((site.settings.client || site.name) + ' report', body, { plain: true });
 }
 
-function settings(user, sites, notice) {
+function planPanel(user, sites, limit, opts) {
+  const monitored = sites.filter((s) => s.monitored).length;
+  const b = user.billing || {};
+  const paid = user.plan && user.plan !== 'free';
+  const current = `<p style="margin-top:6px">You are on <strong>${esc(paid && PLANS[user.plan] ? PLANS[user.plan].name : 'Free')}</strong>: ${monitored} of ${limit} site${limit === 1 ? '' : 's'} monitored, ${sites.length} connected.</p>`;
+  const status = paid ? `<p class="muted small" style="margin-top:6px">${b.status === 'cancelled' && b.endsAt ? 'Cancelled, active until ' + esc(fmtDate(b.endsAt)) : b.renewsAt ? 'Renews ' + esc(fmtDate(b.renewsAt)) : ''}${b.status === 'past_due' ? ' · payment failed, please update your card' : ''}</p>` : '';
+  const rows = Object.keys(PLANS).map((k) => {
+    const p = PLANS[k];
+    const isCurrent = user.plan === k;
+    const buttons = isCurrent ? '<span class="pill ok">Current</span>'
+      : opts.billing && !paid ? `<form method="post" action="/app/billing/checkout" style="display:inline"><input type="hidden" name="plan" value="${k}"><input type="hidden" name="interval" value="monthly"><button class="btn sm${k === 'studio' ? ' primary' : ''}" type="submit">$${p.monthly}/mo</button></form> <form method="post" action="/app/billing/checkout" style="display:inline"><input type="hidden" name="plan" value="${k}"><input type="hidden" name="interval" value="yearly"><button class="btn sm" type="submit">$${p.yearly}/yr</button></form>`
+      : `<span class="muted small">$${p.monthly}/mo</span>`;
+    return `<li><span><strong>${p.name}</strong> · ${p.sites} sites</span><span>${buttons}</span></li>`;
+  }).join('');
+  const manage = paid && b.subscriptionId ? `<div class="actions" style="margin-top:10px"><a class="btn sm" href="/app/billing/portal">Manage billing, invoices or cancel</a></div>` : '';
+  const note = paid ? '<p class="muted small" style="margin-top:10px">To change plans, use Manage billing. Need more than 40 sites? Write to info@silitlabs.com.</p>'
+    : `<p class="muted small" style="margin-top:10px">${opts.billing ? 'Yearly plans include two months free. Payments are handled by Lemon Squeezy; cancel any time.' : 'Paid plans are opening shortly.'} Need more than 40 sites? Write to info@silitlabs.com.</p>`;
+  return `<div class="panel" id="plan"><h3>Plan</h3>${current}${status}<ul class="issues plans" style="margin-top:8px"><li><span><strong>Free</strong> · 1 site</span><span>${user.plan === 'free' || !user.plan ? '<span class="pill ok">Current</span>' : ''}</span></li>${rows}</ul>${manage}${note}</div>`;
+}
+
+function settings(user, sites, notice, opts) {
   const limit = user._limit || PLAN_LIMITS[user.plan] || PLAN_LIMITS.free;
   const body = `
 ${notice ? `<div class="notice">${notice}</div>` : ''}
@@ -260,9 +283,7 @@ ${notice ? `<div class="notice">${notice}</div>` : ''}
 <label class="check"><input type="checkbox" name="digest" value="1" ${user.settings.digest !== false ? 'checked' : ''}> Weekly summary every Monday</label>
 <div class="actions"><button class="btn primary" type="submit">Save</button></div>
 </form></div>
-<div class="panel" id="plan"><h3>Plan</h3><p style="margin-top:6px">You are on <strong>${esc(user.plan)}</strong>: up to ${limit} monitored sites. ${sites.length} connected.</p>
-<ul class="issues" style="margin-top:8px"><li>Free <span>3 sites</span></li><li>Pro, $29/month <span>25 sites</span></li><li>Agency, $79/month <span>100 sites</span></li></ul>
-<p class="muted small" style="margin-top:10px">Need more than ${limit} sites? Write to info@silitlabs.com.</p></div>
+${planPanel(user, sites, limit, opts || {})}
 <div class="panel"><h3>Webflow connections</h3><p class="muted small" style="margin:6px 0 10px">Each connection is one Webflow authorization. Connect again to add sites from another workspace.</p>
 <ul class="issues">${user.connections.map((c) => `<li>${esc(c.label || 'Connection')} <span>${new Date(c.authorizedAt).toISOString().slice(0, 10)}, ${sites.filter((s) => s.connectionId === c.id).length} sites</span></li>`).join('') || '<li class="muted">None yet</li>'}</ul>
 <div class="actions" style="margin-top:10px"><a class="btn" href="/auth">Connect more sites</a></div></div>

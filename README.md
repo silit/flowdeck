@@ -30,7 +30,9 @@ assets/               logo (900 ve 256 px), Marketplace metinleri (listing.md)
 5. `/cron/digest` (günde bir, sadece pazartesi gönderir): haftalık özet e-postası.
 6. `/r/{token}`: müşteri raporu, oturum gerektirmez, `noindex`.
 
-Plan limitleri `store.js` içinde: free 3, pro 25, agency 100. Beta süresince `BETA_FREE_LIMIT` (varsayılan 25) free planı yükseltir. Limit üstündeki siteler "Paused" olarak listelenir, izlenmez.
+Plan limitleri `store.js` içinde: Free 1, Solo 5 ($9), Studio 15 ($24), Agency 40 ($49); yıllıkta 2 ay bedava. `COMPLIMENTARY_EMAILS` içindeki e-postalar ücretsiz Agency limiti alır. Kullanıcıya elle limit vermek için Redis'teki user kaydına `limitOverride` yazılır. Limit üstündeki siteler "Paused" olur, silinmez.
+
+Ödeme Lemon Squeezy ile: Settings'teki butonlar `/app/billing/checkout` ile ödeme sayfası açar, webhook (`/billing/webhook`, `api/billing-webhook.mjs`) planı günceller. Store'daki varyant adları plan adını (Solo, Studio, Agency) ve yıllıklar için "Yearly" kelimesini içermeli.
 
 ## Yayına alma
 

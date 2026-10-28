@@ -25,7 +25,8 @@ function checks(days, downWindows) {
 }
 
 const user = {
-  id: 'u1', email: 'hello@northstudio.co', name: 'North Studio', plan: 'free', _limit: 25,
+  id: 'u1', email: 'hello@northstudio.co', name: 'North Studio', plan: 'studio', _limit: 15,
+  billing: { subscriptionId: '1', status: 'active', plan: 'studio', interval: 'monthly', renewsAt: new Date(Date.now() + 18 * 86400000).toISOString() },
   settings: { digest: true, alerts: true, brand: 'North Studio', alertEmail: 'alerts@northstudio.co' },
   connections: [{ id: 'c1', label: 'hello@northstudio.co', authorizedAt: now - 40 * DAY }],
   siteIds: ['s1', 's2', 's3', 's4', 's5', 's6']
@@ -78,7 +79,7 @@ const pages = {
   '1-dashboard': html.dashboard(user, sites, checksBySite, now, ''),
   '2-site-detail': html.siteDetail(user, sites[0], checksBySite.s1, now, ''),
   '3-client-report': html.report(user, sites[0], checksBySite.s1, now),
-  '4-settings': html.settings(user, sites, ''),
+  '4-settings': html.settings(user, sites, '', { billing: true }),
   '5-weekly-email': `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;background:#f4f6f8;padding:40px;font-family:Figtree,Segoe UI,Helvetica,Arial,sans-serif}.mail{max-width:900px;margin:0 auto;background:#fff;border:1px solid #dbe1e8;border-radius:12px;padding:28px}.hdr{font-size:13px;color:#5b6876;margin-bottom:18px;padding-bottom:12px;border-bottom:1px solid #dbe1e8}</style></head><body><div class="mail"><div class="hdr"><strong>From:</strong> Flowdeck &lt;alerts@silitlabs.com&gt; &nbsp; <strong>To:</strong> alerts@northstudio.co &nbsp; <strong>Subject:</strong> [Flowdeck] Weekly report: 6 sites</div>${digestHtml(user, sites.map((s) => Object.assign({}, s, { _checks: checksBySite[s.id] })), now)}</div></body></html>`
 };
 

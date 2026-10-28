@@ -11,9 +11,19 @@
 const kv = require('./kv');
 const { seal, open, random } = require('./crypto');
 
-const PLAN_LIMITS = { free: 3, pro: 25, agency: 100 };
+const PLAN_LIMITS = { free: 1, solo: 5, studio: 15, agency: 40 };
 const CMS_LIMITS = { basic: 0, cms: 2000, business: 10000, enterprise: 100000, unknown: 0 };
 const UPTIME_KEEP = 2016; // 7 days at 5 minute checks
+
+// Site limit for a user: plan limit (FREE_SITE_LIMIT env can change the free one), a manual
+// limitOverride set by us, or the Agency limit for emails in COMPLIMENTARY_EMAILS.
+function limitFor(user) {
+  const free = parseInt(process.env.FREE_SITE_LIMIT || '', 10) || PLAN_LIMITS.free;
+  const base = user.plan && user.plan !== 'free' && PLAN_LIMITS[user.plan] ? PLAN_LIMITS[user.plan] : free;
+  const extra = user.limitOverride > base ? user.limitOverride : base;
+  const comp = String(process.env.COMPLIMENTARY_EMAILS || '').toLowerCase().split(',').map((x) => x.trim()).filter(Boolean);
+  return comp.includes(String(user.email || '').toLowerCase()) ? Math.max(extra, PLAN_LIMITS.agency) : extra;
+}
 
 async function getUser(id) { return kv.getJSON('user:' + id); }
 async function saveUser(user) {
@@ -130,12 +140,25 @@ async function deleteUser(id) {
   await kv.srem('users:all', id);
 }
 
+// Keeps at most `limit` sites monitored. Sites already monitored keep their place (oldest first),
+// then sites paused only because of the limit fill free slots; sites the user paused stay paused.
+async function enforceLimit(user, limit) {
+  const sites = await getSites(user.siteIds || []);
+  const byAge = (a, b) => (a.createdAt || 0) - (b.createdAt || 0);
+  const on = sites.filter((s) => s.monitored).sort(byAge);
+  const waiting = sites.filter((s) => !s.monitored && !s.pausedByUser).sort(byAge);
+  let changed = 0;
+  for (let i = limit; i < on.length; i++) { on[i].monitored = false; await saveSite(on[i]); changed++; }
+  for (let i = 0, free = limit - Math.min(on.length, limit); i < waiting.length && i < free; i++) { waiting[i].monitored = true; await saveSite(waiting[i]); changed++; }
+  return changed;
+}
+
 async function lock(name, ttl) { return kv.setNX('lock:' + name, { at: Date.now() }, ttl || 240); }
 async function unlock(name) { return kv.del('lock:' + name); }
 
 module.exports = {
-  PLAN_LIMITS, CMS_LIMITS, UPTIME_KEEP,
+  PLAN_LIMITS, CMS_LIMITS, UPTIME_KEEP, limitFor,
   getUser, saveUser, allUserIds, newUser, addConnection, tokenOf,
   getSite, getSites, saveSite, allSiteIds, deleteSite, newSite, refreshMeta, primaryUrl,
-  pushCheck, recentChecks, getAlert, setAlert, clearAlert, ensureReportToken, siteIdForReport, deleteReport, deleteUser, lock, unlock
+  pushCheck, recentChecks, getAlert, setAlert, clearAlert, ensureReportToken, siteIdForReport, deleteReport, deleteUser, enforceLimit, lock, unlock
 };

@@ -33,7 +33,15 @@ Agencies and freelancers run ten, thirty, a hundred Webflow sites. Nobody opens 
 - Submission counts only; the content of form submissions is never read or stored.
 - Delete your account from Settings and all data goes with it.
 
-Free for up to 25 sites. Not affiliated with Webflow.
+**Pricing**
+- Free: 1 site, every feature
+- Solo: $9/month, up to 5 sites
+- Studio: $24/month, up to 15 sites
+- Agency: $49/month, up to 40 sites
+
+Yearly plans include two months free. Every plan has every feature; plans differ only in the number of sites. Payments through Lemon Squeezy, cancel any time.
+
+Not affiliated with Webflow.
 
 ## Feature list (up to 5)
 1. Uptime and SSL monitoring for every site, every 5 minutes
@@ -62,7 +70,7 @@ assets/logo-900.png (900x900 PNG). Upload name: flowdeck-logo.png
 5. The weekly summary email
 
 ## Review notes
-Free app for up to 25 sites, no in-app purchases. Data Client app with read-only scopes (authorized_user:read, sites:read, pages:read, cms:read, forms:read). The app reads site metadata, page SEO fields, form submission dates and CMS item counts, stores the OAuth token encrypted for scheduled checks, and performs HTTP uptime checks against the published site. It never writes to a site. To test: sign in, allow one or more sites, open the dashboard; uptime appears within 5 minutes; use Refresh data for forms, CMS and SEO; Settings lets you delete the account. If the user denies access on the Webflow consent screen, Flowdeck shows an "Authorization cancelled" page with a link back to the start; nothing is stored.
+Freemium. The free plan monitors 1 site with every feature; paid plans (Solo $9/mo for 5 sites, Studio $24/mo for 15, Agency $49/mo for 40; yearly with two months free) only raise the site limit and are bought in Settings through a Lemon Squeezy checkout. No feature is gated, so the free plan is enough to review everything; if you need more sites for review, write to info@silitlabs.com and we raise the limit on your account at no cost. Data Client app with read-only scopes (authorized_user:read, sites:read, pages:read, cms:read, forms:read). The app reads site metadata, page SEO fields, form submission dates and CMS item counts, stores the OAuth token encrypted for scheduled checks, and performs HTTP uptime checks against the published site. It never writes to a site. To test: sign in, allow one or more sites, open the dashboard; uptime appears within 5 minutes; use Refresh data for forms, CMS and SEO; Settings lets you delete the account. If the user denies access on the Webflow consent screen, Flowdeck shows an "Authorization cancelled" page with a link back to the start; nothing is stored.
 
 ## Scopes to request in the app settings
 authorized_user:read, sites:read, pages:read, cms:read, forms:read

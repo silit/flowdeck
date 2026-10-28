@@ -40,7 +40,7 @@
   .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px}
   .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px;display:grid;gap:8px;align-content:start}
   .card p{font-size:15px}
-  .price{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+  .price{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px}.price .card.hl{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
   .price .card .n{font-family:"Bricolage Grotesque",Arial,sans-serif;font-size:34px;font-weight:700}
   .price ul{margin:0;padding-left:18px;font-size:14px;display:grid;gap:4px}
   .faq details{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 16px}
@@ -63,7 +63,7 @@
     <p class="lead muted">Flowdeck watches all your Webflow sites and tells you before the client does: a site went down, the SSL is about to expire, changes have sat unpublished for a week, a form stopped receiving submissions, or a CMS is near its limit. Plus a white-label report you can send every month.</p>
     <div class="actions">
       <a class="btn primary" href="/auth">Connect your Webflow sites</a>
-      <span class="muted" style="font-size:14px">Free for up to 25 sites. Read-only access, nothing on your sites changes.</span>
+      <span class="muted" style="font-size:14px">Free for your first site. Read-only access, nothing on your sites changes.</span>
     </div>
     <div class="demo"><div class="scroll"><table>
       <thead><tr><th>Site</th><th>Status</th><th>Uptime 7d</th><th>SSL</th><th>Publish</th><th>Forms 7d / 30d</th><th>CMS items</th><th>SEO</th></tr></thead>
@@ -93,10 +93,12 @@
   <section id="pricing">
     <div><span class="eyebrow">Pricing</span><h2>Per workspace, not per seat</h2></div>
     <div class="price">
-      <div class="card"><h3>Free</h3><div class="n">$0</div><p class="muted">Up to 25 sites.</p><ul><li>All checks and alerts</li><li>Weekly summary</li><li>Client report links</li></ul></div>
-      <div class="card"><h3>More than 25 sites</h3><div class="n">Ask us</div><p class="muted">Write to info@silitlabs.com and we will raise your limit.</p><ul><li>Everything in Free</li><li>Higher site limit</li><li>Email support</li></ul></div>
+      <div class="card"><h3>Free</h3><div class="n">$0</div><p class="muted">1 site, forever.</p><ul><li>Every check and alert</li><li>Weekly summary</li><li>Client report link</li></ul></div>
+      <div class="card"><h3>Solo</h3><div class="n">$9<span class="muted" style="font-size:14px;font-weight:400">/month</span></div><p class="muted">Up to 5 sites.</p><ul><li>Everything in Free</li><li>For freelancers</li><li>$90/year</li></ul></div>
+      <div class="card hl"><h3>Studio</h3><div class="n">$24<span class="muted" style="font-size:14px;font-weight:400">/month</span></div><p class="muted">Up to 15 sites.</p><ul><li>Everything in Free</li><li>About $1.60 per site</li><li>$240/year</li></ul></div>
+      <div class="card"><h3>Agency</h3><div class="n">$49<span class="muted" style="font-size:14px;font-weight:400">/month</span></div><p class="muted">Up to 40 sites.</p><ul><li>Everything in Free</li><li>About $1.20 per site</li><li>$490/year</li></ul></div>
     </div>
-    <p class="muted" style="font-size:14px">There are no in-app purchases. If paid plans are added later, existing sites keep working on the free plan.</p>
+    <p class="muted" style="font-size:14px">Every plan has every feature; plans differ only in the number of sites. Yearly plans include two months free. Upgrade from Settings inside the app. Payments are handled by Lemon Squeezy, our merchant of record, and you can cancel any time. More than 40 sites? Write to info@silitlabs.com.</p>
   </section>
 
   <section id="faq" class="faq">

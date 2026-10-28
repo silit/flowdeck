@@ -112,7 +112,7 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
 
   Object.assign(process.env, {
     WEBFLOW_CLIENT_ID: 'cid', WEBFLOW_CLIENT_SECRET: 'sec', SESSION_SECRET: 'test-session-secret-which-is-long',
-    APP_URL: 'https://app.test', CRON_SECRET: 'cronkey', BETA_FREE_LIMIT: '2', SITE_URL_SCHEME: 'http',
+    APP_URL: 'https://app.test', CRON_SECRET: 'cronkey', FREE_SITE_LIMIT: '2', SITE_URL_SCHEME: 'http',
     KV_REST_API_URL: 'http://127.0.0.1:' + redisPort, KV_REST_API_TOKEN: 't',
     WEBFLOW_API_BASE: 'http://127.0.0.1:' + wfPort, WEBFLOW_AUTH_BASE: 'http://127.0.0.1:' + wfPort,
     RESEND_API_KEY: 'rk', RESEND_API_BASE: 'http://127.0.0.1:' + resendPort, EMAIL_FROM: 'Flowdeck <t@test>'
@@ -155,7 +155,7 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
   const userRaw = JSON.parse(db.get('user:user_1'));
   assert(userRaw.email === 'owner@agency.com' && userRaw.connections.length === 1 && !JSON.stringify(userRaw).includes('tok_abc'), 'user stored with an encrypted token');
   const sA = JSON.parse(db.get('site:siteA')), sB = JSON.parse(db.get('site:siteB')), sC = JSON.parse(db.get('site:siteC'));
-  assert(sA.monitored && sB.monitored && !sC.monitored, 'third site paused by the beta limit of 2');
+  assert(sA.monitored && sB.monitored && !sC.monitored, 'third site paused by the free limit of 2');
   assert(sA.data && sA.data.pages.issues === 4 && sA.data.pages.missingTitle.length === 1 && sA.data.pages.missingDesc.length === 1 && sA.data.pages.longDesc.length === 1 && sA.data.pages.dupTitle.length === 1, 'SEO analysis: missing title and description, long description, duplicate title; archived page ignored');
   assert(sA.data.forms.total7 === 2 && sA.data.forms.total30 === 3, 'form counts for 7 and 30 days');
   assert(sA.data.cms.total === 1940, 'CMS item total');
@@ -226,7 +226,63 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
   r = await request(port, 'GET', '/cron/digest?key=cronkey&force=1');
   assert(JSON.parse(r.body).skipped === 'already sent today', 'digest not sent twice on the same day');
 
-  console.log('6. settings, remove site, delete account');
+  console.log('6. plans and billing (Lemon Squeezy)');
+  const lsCalls = [];
+  const ls = http.createServer(async (req, res) => {
+    const u = new URL(req.url, 'http://x');
+    const body = req.method === 'POST' ? await readJSON(req) : null;
+    lsCalls.push({ method: req.method, path: u.pathname, search: u.search, body, auth: req.headers.authorization });
+    if (u.pathname === '/v1/products') return json(res, 200, { data: [{ id: 'p1', attributes: { name: 'Flowdeck' } }] });
+    if (u.pathname === '/v1/variants') return json(res, 200, { data: [
+      { id: '11', attributes: { name: 'Solo Monthly', status: 'published' } }, { id: '12', attributes: { name: 'Solo Yearly', status: 'published' } },
+      { id: '21', attributes: { name: 'Studio Monthly', status: 'published' } }, { id: '22', attributes: { name: 'Studio Yearly', status: 'published' } },
+      { id: '31', attributes: { name: 'Agency Monthly', status: 'published' } }, { id: '32', attributes: { name: 'Agency Yearly', status: 'published' } }] });
+    if (u.pathname === '/v1/checkouts') return json(res, 201, { data: { id: 'chk1', attributes: { url: 'https://silit.lemonsqueezy.com/checkout/custom/abc' } } });
+    if (u.pathname === '/v1/subscriptions/900') return json(res, 200, { data: { id: '900', attributes: { urls: { customer_portal: 'https://silit.lemonsqueezy.com/billing?fresh=1' } } } });
+    json(res, 404, {});
+  });
+  const lsPort = await listen(ls);
+  Object.assign(process.env, { LEMONSQUEEZY_API_KEY: 'lskey', LEMONSQUEEZY_STORE_ID: '77', LEMONSQUEEZY_WEBHOOK_SECRET: 'whsec', LEMONSQUEEZY_API_BASE: 'http://127.0.0.1:' + lsPort });
+  const post = (p, data) => request(port, 'POST', p, { headers: { Cookie: session, 'Content-Type': 'application/x-www-form-urlencoded', Origin: 'https://app.test' }, body: form(data) });
+  const setPage = await request(port, 'GET', '/app/settings', { headers: { Cookie: session } });
+  assert(setPage.body.includes('Studio</strong> · 15 sites') && setPage.body.includes('$24/mo') && setPage.body.includes('$240/yr'), 'settings lists paid plans with checkout buttons');
+  const co = await post('/app/billing/checkout', { plan: 'studio', interval: 'yearly' });
+  const coCall = lsCalls.find((c) => c.path === '/v1/checkouts');
+  assert(co.status === 302 && co.headers.location === 'https://silit.lemonsqueezy.com/checkout/custom/abc', 'checkout redirects to Lemon Squeezy');
+  assert(coCall && coCall.auth === 'Bearer lskey' && coCall.body.data.relationships.variant.data.id === '22' && coCall.body.data.relationships.store.data.id === '77' && coCall.body.data.attributes.checkout_data.custom.user_id === 'user_1', 'checkout uses the Studio Yearly variant and carries the user id');
+  const sig = coCall.body.data.attributes.checkout_data.custom.sig;
+  const hook = await import('../api/billing-webhook.mjs');
+  const sendHook = async (evt, secret) => {
+    const raw = JSON.stringify(evt);
+    const h = crypto.createHmac('sha256', secret || 'whsec').update(raw).digest('hex');
+    const r = await hook.POST(new Request('https://app.test/billing/webhook', { method: 'POST', headers: { 'x-signature': h, 'content-type': 'application/json' }, body: raw }));
+    return { status: r.status, body: await r.json() };
+  };
+  const sub = (status, variant, extra) => ({ type: 'subscriptions', id: '900', attributes: Object.assign({ status, product_name: 'Flowdeck', variant_name: variant, renews_at: iso(now + 365 * DAY), ends_at: null, urls: { customer_portal: 'https://silit.lemonsqueezy.com/billing?old=1' } }, extra || {}) });
+  let wh = await sendHook({ meta: { event_name: 'subscription_created', custom_data: { user_id: 'user_1', sig } }, data: sub('active', 'Studio Yearly') }, 'wrong');
+  assert(wh.status === 401, 'webhook with a bad signature is rejected');
+  wh = await sendHook({ meta: { event_name: 'subscription_created', custom_data: { user_id: 'user_1', sig: 'forged' } }, data: Object.assign(sub('active', 'Agency Monthly'), { id: '901' }) });
+  assert(wh.body.ignored === 'no user' && JSON.parse(db.get('user:user_1')).plan === 'free', 'webhook with a forged user id is ignored');
+  wh = await sendHook({ meta: { event_name: 'subscription_created', custom_data: { user_id: 'user_1', sig } }, data: sub('active', 'Studio Yearly') });
+  let u1 = JSON.parse(db.get('user:user_1'));
+  assert(wh.status === 200 && u1.plan === 'studio' && u1.billing.interval === 'yearly' && u1.billing.subscriptionId === '900', 'subscription_created upgrades the user to Studio');
+  assert(JSON.parse(db.get('site:siteC')).monitored, 'paused third site is monitored after the upgrade');
+  const mon = await post('/app/site/monitor', { id: 'siteC', on: '0' });
+  await request(port, 'GET', '/app', { headers: { Cookie: session } });
+  const c3 = JSON.parse(db.get('site:siteC'));
+  assert(mon.status === 302 && !c3.monitored && c3.pausedByUser, 'user can pause a site and it stays paused');
+  const portal = await request(port, 'GET', '/app/billing/portal', { headers: { Cookie: session } });
+  assert(portal.status === 302 && portal.headers.location === 'https://silit.lemonsqueezy.com/billing?fresh=1', 'billing portal link is fetched fresh');
+  wh = await sendHook({ meta: { event_name: 'subscription_cancelled' }, data: sub('cancelled', 'Studio Yearly', { ends_at: iso(now + 30 * DAY) }) });
+  assert(JSON.parse(db.get('user:user_1')).plan === 'studio', 'cancelled subscription keeps the plan until it ends');
+  await post('/app/site/monitor', { id: 'siteC', on: '1' });
+  wh = await sendHook({ meta: { event_name: 'subscription_expired' }, data: sub('expired', 'Studio Yearly', { ends_at: iso(now - DAY) }) });
+  u1 = JSON.parse(db.get('user:user_1'));
+  const monitoredNow = ['siteA', 'siteB', 'siteC'].filter((id) => JSON.parse(db.get('site:' + id)).monitored);
+  assert(u1.plan === 'free' && monitoredNow.length === 2 && !monitoredNow.includes('siteC'), 'expired subscription drops to free and pauses the newest site');
+  ls.close();
+
+  console.log('7. settings, remove site, delete account');
   const st = await request(port, 'POST', '/app/settings', { headers: { Cookie: session, 'Content-Type': 'application/x-www-form-urlencoded', Origin: 'https://app.test' }, body: form({ alertEmail: 'alerts@agency.com', brand: 'Studio X', alerts: '1', digest: '1' }) });
   assert(st.status === 302 && JSON.parse(db.get('user:user_1')).settings.brand === 'Studio X', 'user settings saved');
   const rm = await request(port, 'POST', '/app/site/remove', { headers: { Cookie: session, 'Content-Type': 'application/x-www-form-urlencoded', Origin: 'https://app.test' }, body: form({ id: 'siteB' }) });

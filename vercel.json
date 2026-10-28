@@ -1,18 +1,55 @@
 {
   "rewrites": [
-    { "source": "/privacy", "destination": "/privacy.html" },
-    { "source": "/terms", "destination": "/terms.html" },
-    { "source": "/app", "destination": "/api/index?path=app" },
-    { "source": "/app/:rest*", "destination": "/api/index?path=app/:rest*" },
-    { "source": "/r/:token", "destination": "/api/index?path=r/:token" },
-    { "source": "/cron/:job", "destination": "/api/index?path=cron/:job" },
-    { "source": "/:p(auth|callback|logout|health)", "destination": "/api/index?path=:p" }
+    {
+      "source": "/billing/webhook",
+      "destination": "/api/billing-webhook"
+    },
+    {
+      "source": "/privacy",
+      "destination": "/privacy.html"
+    },
+    {
+      "source": "/terms",
+      "destination": "/terms.html"
+    },
+    {
+      "source": "/app",
+      "destination": "/api/index?path=app"
+    },
+    {
+      "source": "/app/:rest*",
+      "destination": "/api/index?path=app/:rest*"
+    },
+    {
+      "source": "/r/:token",
+      "destination": "/api/index?path=r/:token"
+    },
+    {
+      "source": "/cron/:job",
+      "destination": "/api/index?path=cron/:job"
+    },
+    {
+      "source": "/:p(auth|callback|logout|health)",
+      "destination": "/api/index?path=:p"
+    }
   ],
   "headers": [
-    { "source": "/(.*)", "headers": [
-      { "key": "X-Frame-Options", "value": "DENY" },
-      { "key": "X-Content-Type-Options", "value": "nosniff" },
-      { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
-    ] }
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        }
+      ]
+    }
   ]
 }
