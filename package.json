@@ -1,0 +1,15 @@
+{
+  "name": "flowdeck",
+  "version": "0.1.0",
+  "private": true,
+  "description": "One dashboard for every Webflow site an agency manages: uptime, SSL, forms, publish state, SEO checks, client reports.",
+  "scripts": {
+    "test": "node test/app.js",
+    "logo": "node scripts/logo.js"
+  },
+  "engines": { "node": ">=20" },
+  "license": "MIT",
+  "devDependencies": {
+    "sharp": "^0.35.5"
+  }
+}

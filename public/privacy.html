@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flowdeck Privacy Policy</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<style>
+  :root { --bg: #f4f6f8; --fg: #121a24; --muted: #5b6876; --line: #dbe1e8; --accent: #1f6feb; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0f141a; --fg: #e8edf2; --muted: #94a1af; --line: #2a3441; --accent: #5b9dff; color-scheme: dark; } }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 Figtree, "Segoe UI", Helvetica, Arial, sans-serif; padding: 0 16px 48px; }
+  main { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 30px; margin: 32px 0 6px; line-height: 1.15; }
+  h2 { font-size: 20px; margin: 28px 0 8px; }
+  p, li { max-width: 68ch; }
+  .muted { color: var(--muted); }
+  a { color: var(--accent); }
+  nav { padding: 18px 0; border-bottom: 1px solid var(--line); }
+  nav a { text-decoration: none; color: var(--fg); font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+  <nav><a href="/">Flowdeck</a></nav>
+  <h1>Privacy Policy</h1>
+  <p class="muted">Last updated: 28 October 2026</p>
+  <h2>What Flowdeck is</h2>
+  <p>Flowdeck is a monitoring dashboard for people who manage Webflow sites. It connects to Webflow with the permissions you grant, checks your sites from the outside, and emails you alerts and summaries. This policy explains what it stores and why.</p>
+  <h2>Webflow access</h2>
+  <p>When you sign in, Webflow asks you which sites to share. Flowdeck requests read-only scopes: your user id and email, site metadata, pages (titles and SEO fields), form submission dates and form names, and CMS collection item counts. Flowdeck never writes to your sites and never reads the content of form submissions.</p>
+  <p>The access token Webflow issues is stored encrypted in our database so scheduled checks can run while you are away. Revoke it any time from your Webflow workspace, or delete your Flowdeck account.</p>
+  <h2>What we store</h2>
+  <ul>
+    <li>Your Webflow user id, email address and the settings you choose (alert address, agency name).</li>
+    <li>Per site: name, domains, last published and last updated dates, counts of form submissions by date, page titles and descriptions flagged by the SEO checks, CMS item counts.</li>
+    <li>Uptime check results (time, status code, response time) for the last 7 days, and SSL certificate expiry dates.</li>
+    <li>Alert history, so the same problem is reported once.</li>
+  </ul>
+  <h2>Client report links</h2>
+  <p>A report link is public to anyone who has it, shows aggregated numbers only, and is marked not to be indexed by search engines. Create a new link at any time to invalidate the old one.</p>
+  <h2>Third parties</h2>
+  <ul>
+    <li>Webflow (the sites and the API).</li>
+    <li>Vercel (hosting) and Upstash (database).</li>
+    <li>Resend (email delivery).</li>
+    <li>cron-job.org (schedules the checks).</li>
+  </ul>
+  <p>Our hosting provider keeps standard server logs for a limited period.</p>
+  <h2>Deleting your data</h2>
+  <p>Settings, "Delete my Flowdeck account" removes your account, sites, check history and tokens immediately. Your Webflow sites are not affected.</p>
+  <h2>Contact</h2>
+  <p>Use the support email on the Webflow Marketplace listing or the Flowdeck website.</p>
+</main>
+</body>
+</html>

@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Flowdeck for Webflow agencies</title>
+<meta name="description" content="One dashboard for every Webflow site you manage. Uptime, SSL, unpublished changes, form submissions, CMS limits, SEO checks, alerts and white-label client reports.">
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Figtree:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap">
+<style>
+  :root{--bg:#f4f6f8;--surface:#fff;--fg:#121a24;--muted:#5b6876;--line:#dbe1e8;--accent:#1f6feb;--accent-ink:#fff;--ok:#1a9a5a;--ok-bg:#dff5e8;--bad:#c9372c;--bad-bg:#fde3df;--warn:#b26a00;--warn-bg:#fff0d6;--code:#eef2f6}
+  @media(prefers-color-scheme:dark){:root{--bg:#0f141a;--surface:#161d26;--fg:#e8edf2;--muted:#94a1af;--line:#2a3441;--accent:#5b9dff;--accent-ink:#0b1220;--ok:#49d08a;--ok-bg:#133526;--bad:#ff7b6e;--bad-bg:#40201c;--warn:#ffb55c;--warn-bg:#3c2d12;--code:#1f2832;color-scheme:dark}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 Figtree,"Segoe UI",Helvetica,Arial,sans-serif;padding:0 max(16px,env(safe-area-inset-left)) 56px max(16px,env(safe-area-inset-right))}
+  .wrap{max-width:1080px;margin:0 auto}
+  a{color:var(--accent)}
+  h1,h2,h3{font-family:"Bricolage Grotesque",Arial,sans-serif;margin:0;line-height:1.1;text-wrap:balance}
+  h1{font-size:clamp(34px,5.5vw,58px);font-weight:700;letter-spacing:-0.02em;max-width:16ch}
+  h2{font-size:clamp(24px,3vw,32px);font-weight:700;letter-spacing:-0.01em}
+  h3{font-size:17px;font-weight:700}
+  p{margin:0;max-width:62ch}
+  .muted{color:var(--muted)}
+  .eyebrow{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+  .top{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:18px 0;border-bottom:1px solid var(--line)}
+  .brand{font-family:"Bricolage Grotesque",Arial,sans-serif;font-weight:700;font-size:22px;text-decoration:none;color:var(--fg)}.brand span{color:var(--accent)}
+  .top nav{display:flex;gap:18px;font-size:14px;font-weight:500}.top nav a{color:var(--fg);text-decoration:none}
+  .btn{font:inherit;font-weight:600;font-size:15px;border-radius:9px;padding:11px 18px;cursor:pointer;border:1px solid var(--line);background:var(--surface);color:var(--fg);text-decoration:none;display:inline-flex;gap:8px;align-items:center}
+  .btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+  .hero{padding-block:56px 36px;display:grid;gap:18px}
+  .hero p.lead{font-size:19px}
+  .actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+  .demo{margin-top:12px;background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .demo table{border-collapse:collapse;width:100%;min-width:760px;font-size:14px}
+  .demo th,.demo td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);white-space:nowrap}
+  .demo th{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:600}
+  .demo tr:last-child td{border-bottom:0}
+  .scroll{overflow-x:auto}
+  .pill{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;border-radius:999px;padding:3px 9px}.pill.ok{background:var(--ok-bg);color:var(--ok)}.pill.bad{background:var(--bad-bg);color:var(--bad)}.pill.warn{background:var(--warn-bg);color:var(--warn)}
+  section{padding-block:40px 0;display:grid;gap:18px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px;display:grid;gap:8px;align-content:start}
+  .card p{font-size:15px}
+  .price{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+  .price .card .n{font-family:"Bricolage Grotesque",Arial,sans-serif;font-size:34px;font-weight:700}
+  .price ul{margin:0;padding-left:18px;font-size:14px;display:grid;gap:4px}
+  .faq details{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 16px}
+  .faq summary{cursor:pointer;font-weight:600}
+  .faq p{margin-top:8px;font-size:15px}
+  footer{margin-top:48px;padding-top:18px;border-top:1px solid var(--line);font-size:13px;color:var(--muted);display:flex;flex-wrap:wrap;gap:8px 20px}
+  @media(max-width:700px){.top nav{display:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="/">Flow<span>deck</span></a>
+    <nav><a href="#what">What you get</a><a href="#pricing">Pricing</a><a href="#faq">FAQ</a><a href="/auth">Sign in</a></nav>
+  </header>
+
+  <section class="hero">
+    <span class="eyebrow">For agencies and freelancers on Webflow</span>
+    <h1>Every client site you manage, on one screen.</h1>
+    <p class="lead muted">Flowdeck watches all your Webflow sites and tells you before the client does: a site went down, the SSL is about to expire, changes have sat unpublished for a week, a form stopped receiving submissions, or a CMS is near its limit. Plus a white-label report you can send every month.</p>
+    <div class="actions">
+      <a class="btn primary" href="/auth">Connect your Webflow sites</a>
+      <span class="muted" style="font-size:14px">Free during beta, up to 25 sites. Read-only access, nothing on your sites changes.</span>
+    </div>
+    <div class="demo"><div class="scroll"><table>
+      <thead><tr><th>Site</th><th>Status</th><th>Uptime 7d</th><th>SSL</th><th>Publish</th><th>Forms 7d / 30d</th><th>CMS items</th><th>SEO</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Harbour Dental</strong><br><span class="muted" style="font-size:12px">harbourdental.co.uk</span></td><td><span class="pill ok">Up</span></td><td>100%</td><td>71d</td><td class="muted">Published 2026-10-21</td><td>14 / 61</td><td>1,940 / 2,000</td><td><span class="pill warn">4</span></td></tr>
+        <tr><td><strong>Nordic Yacht Charter</strong><br><span class="muted" style="font-size:12px">nordicyacht.com</span></td><td><span class="pill bad">Down</span></td><td>98.1%</td><td>12d</td><td><span class="pill warn">Unpublished 9d</span></td><td>0 / 23</td><td>312</td><td><span class="pill ok">0</span></td></tr>
+        <tr><td><strong>Lumen Architects</strong><br><span class="muted" style="font-size:12px">lumen.studio</span></td><td><span class="pill ok">Up</span></td><td>100%</td><td>58d</td><td class="muted">Published 2026-10-27</td><td>3 / 9</td><td>88</td><td><span class="pill ok">0</span></td></tr>
+      </tbody>
+    </table></div></div>
+    <p class="muted" style="font-size:13px">Example data.</p>
+  </section>
+
+  <section id="what">
+    <div><span class="eyebrow">What you get</span><h2>The checks a good account manager would run every morning</h2></div>
+    <div class="grid">
+      <div class="card"><h3>Uptime and response time</h3><p>Every site checked every 5 minutes from the outside. Two failures in a row and you get an email; another when it is back.</p></div>
+      <div class="card"><h3>SSL expiry</h3><p>Certificate end dates for every custom domain, with a warning 14 days before. Catches DNS changes that broke renewal.</p></div>
+      <div class="card"><h3>Unpublished changes</h3><p>Designer edits that have been waiting more than 7 days, so a half-finished change never goes live by accident, and finished work does.</p></div>
+      <div class="card"><h3>Form submissions</h3><p>Submissions per form for the last 7 and 30 days. A form that goes quiet after being active gets flagged; broken forms are the most expensive silent failure.</p></div>
+      <div class="card"><h3>CMS limits</h3><p>Item counts per collection against the site's plan limit, before the client hits the wall mid-campaign.</p></div>
+      <div class="card"><h3>SEO basics</h3><p>Missing or duplicate meta titles, missing descriptions, titles over 60 and descriptions over 160 characters, per page.</p></div>
+      <div class="card"><h3>Weekly summary</h3><p>Every Monday, one email with every site's uptime, submissions, SEO issues and flags. Two minutes to read.</p></div>
+      <div class="card"><h3>Client report</h3><p>A white-label page per site with your agency name: uptime, forms, publish state, SEO health for the last 30 days. Send the link, done.</p></div>
+    </div>
+  </section>
+
+  <section id="pricing">
+    <div><span class="eyebrow">Pricing</span><h2>Per workspace, not per seat</h2></div>
+    <div class="price">
+      <div class="card"><h3>Free</h3><div class="n">$0</div><p class="muted">3 sites. During the beta, 25.</p><ul><li>All checks and alerts</li><li>Weekly summary</li><li>Client report links</li></ul></div>
+      <div class="card"><h3>Pro</h3><div class="n">$29<span class="muted" style="font-size:14px;font-weight:400">/month</span></div><p class="muted">Up to 25 sites.</p><ul><li>Everything in Free</li><li>Priority checks</li><li>Email support</li></ul></div>
+      <div class="card"><h3>Agency</h3><div class="n">$79<span class="muted" style="font-size:14px;font-weight:400">/month</span></div><p class="muted">Up to 100 sites.</p><ul><li>Everything in Pro</li><li>Team members (coming)</li><li>Custom report domain (coming)</li></ul></div>
+    </div>
+    <p class="muted" style="font-size:14px">Paid plans open after the beta. Nothing you set up now changes.</p>
+  </section>
+
+  <section id="faq" class="faq">
+    <div><span class="eyebrow">FAQ</span><h2>Questions agencies ask first</h2></div>
+    <details><summary>Does Flowdeck change anything on my sites?</summary><p>No. It asks Webflow for read-only access (sites, pages, forms, CMS) and never writes. Uptime is checked from the outside like any visitor would.</p></details>
+    <details><summary>Which sites can I connect?</summary><p>Any site you can see in Webflow, across all your workspaces. Connect once per workspace and pick the sites on Webflow's authorization screen.</p></details>
+    <details><summary>Can clients see the dashboard?</summary><p>Clients get the report link for their own site only. The dashboard is yours.</p></details>
+    <details><summary>What data do you keep?</summary><p>Site metadata, check results for 30 days, submission counts (never the submitted content), page titles and descriptions. Delete your account from Settings and everything goes with it.</p></details>
+    <details><summary>Is this made by Webflow?</summary><p>No. Flowdeck is an independent app built on the Webflow Data API.</p></details>
+  </section>
+
+  <footer>
+    <span>Flowdeck</span>
+    <a href="/privacy">Privacy</a>
+    <a href="/terms">Terms</a>
+    <span>Not affiliated with Webflow.</span>
+  </footer>
+</div>
+</body>
+</html>
