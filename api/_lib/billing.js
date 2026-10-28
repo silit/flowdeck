@@ -16,7 +16,7 @@ const ACTIVE = ['active', 'on_trial', 'past_due'];
 function cfg() {
   return {
     key: process.env.LEMONSQUEEZY_API_KEY || '',
-    store: process.env.LEMONSQUEEZY_STORE_ID || '',
+    store: String(process.env.LEMONSQUEEZY_STORE_ID || '').replace(/\D/g, ''), // tolerate "#123"
     secret: process.env.LEMONSQUEEZY_WEBHOOK_SECRET || '',
     base: (process.env.LEMONSQUEEZY_API_BASE || 'https://api.lemonsqueezy.com').replace(/\/+$/, '')
   };
