@@ -87,3 +87,6 @@ https://webflow.com/oauth/authorize?response_type=code&client_id=a2bf2dbad020335
 3. White-label client report showing the agency name, 30-day uptime, form submissions and SEO health for one site
 4. Settings page with alert email, agency name, alert and weekly summary options and the connected Webflow accounts
 5. Weekly summary email listing every site with uptime, submissions, SEO issues and flags
+
+## Published testing site
+https://flowdeck-demo.webflow.io (Silit Labs workspace: home page, Guides CMS collection with 5 items, contact form)
