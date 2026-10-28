@@ -51,15 +51,20 @@ async function variants() {
   const c = cfg();
   const products = await api('GET', `/v1/products?filter[store_id]=${encodeURIComponent(c.store)}&page[size]=50`);
   const map = {};
+  const seen = [];
   for (const p of products.data || []) {
     const vs = await api('GET', `/v1/variants?filter[product_id]=${encodeURIComponent(p.id)}&page[size]=50`);
     for (const v of vs.data || []) {
-      if (v.attributes && v.attributes.status === 'pending') continue;
-      const m = planFromNames(p.attributes.name, v.attributes.name);
+      const a = v.attributes || {};
+      seen.push(`${p.attributes.name} / ${a.name} (${a.status}${a.test_mode ? ', test' : ''})`);
+      if (a.status === 'pending') continue;
+      const m = planFromNames(p.attributes.name, a.name);
       if (m && !map[m.plan + ':' + m.interval]) map[m.plan + ':' + m.interval] = v.id;
     }
   }
-  variantCache = { at: Date.now(), map };
+  map._seen = `${(products.data || []).length} product(s) in store ${c.store}: ${seen.join('; ') || 'no variants'}`;
+  // Only cache a usable result, so a fix in the store shows up right away
+  if (Object.keys(map).length > 1) variantCache = { at: Date.now(), map };
   return map;
 }
 
@@ -72,7 +77,7 @@ async function checkoutUrl(user, plan, interval, appUrl) {
   interval = interval === 'yearly' ? 'yearly' : 'monthly';
   const map = await variants();
   const variantId = map[plan + ':' + interval];
-  if (!variantId) throw new Error(`No ${PLANS[plan].name} ${interval} variant found in the store.`);
+  if (!variantId) throw new Error(`No ${PLANS[plan].name} ${interval} variant found. Lemon Squeezy returned ${map._seen}.`);
   const c = cfg();
   const data = await api('POST', '/v1/checkouts', {
     data: {
