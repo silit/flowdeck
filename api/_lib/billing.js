@@ -59,7 +59,10 @@ async function variants() {
       seen.push(`${p.attributes.name} / ${a.name} (${a.status}${a.test_mode ? ', test' : ''})`);
       if (a.status === 'pending') continue;
       const m = planFromNames(p.attributes.name, a.name);
-      if (m && !map[m.plan + ':' + m.interval]) map[m.plan + ':' + m.interval] = v.id;
+      if (m && (!map[m.plan + ':' + m.interval] || a.status === 'published')) {
+        map[m.plan + ':' + m.interval] = v.id;
+        map._test = !!a.test_mode;
+      }
     }
   }
   map._seen = `${(products.data || []).length} product(s) in store ${c.store}: ${seen.join('; ') || 'no variants'}`;
@@ -83,6 +86,7 @@ async function checkoutUrl(user, plan, interval, appUrl) {
     data: {
       type: 'checkouts',
       attributes: {
+        test_mode: !!map._test,
         checkout_data: { email: user.settings.alertEmail || user.email || undefined, custom: { user_id: user.id, sig: sign(user.id) } },
         product_options: { redirect_url: appUrl + '/app/settings?upgraded=1', enabled_variants: [Number(variantId)] }
       },
