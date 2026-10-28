@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flowdeck Documentation</title>
+<meta name="description" content="How to install Flowdeck, connect Webflow sites, read the dashboard, set up alerts and share client reports.">
+<link rel="icon" type="image/png" href="/favicon.png">
+<style>
+  :root { --bg: #f4f6f8; --fg: #121a24; --muted: #5b6876; --line: #dbe1e8; --accent: #1f6feb; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0f141a; --fg: #e8edf2; --muted: #94a1af; --line: #2a3441; --accent: #5b9dff; color-scheme: dark; } }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 Figtree, "Segoe UI", Helvetica, Arial, sans-serif; padding: 0 16px 48px; }
+  main { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 30px; margin: 32px 0 6px; line-height: 1.15; }
+  h2 { font-size: 20px; margin: 28px 0 8px; }
+  p, li { max-width: 68ch; }
+  .muted { color: var(--muted); }
+  a { color: var(--accent); }
+  nav { padding: 18px 0; border-bottom: 1px solid var(--line); }
+  nav a { text-decoration: none; color: var(--fg); font-weight: 600; }
+  ol li, ul li { margin-bottom: 6px; }
+  code { background: var(--line); padding: 1px 5px; border-radius: 4px; font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <nav><a href="/">Flowdeck</a></nav>
+  <h1>Documentation</h1>
+  <p class="muted">How to install Flowdeck, connect your Webflow sites and use every feature.</p>
+
+  <h2>1. Install and connect sites</h2>
+  <ol>
+    <li>Open <a href="/">flowdeck.silitlabs.com</a> and click <strong>Connect your Webflow sites</strong>, or install Flowdeck from the Webflow Marketplace.</li>
+    <li>Webflow shows a consent screen. Pick the sites or workspaces you want Flowdeck to monitor and click <strong>Authorize App</strong>.</li>
+    <li>You land on the dashboard. The first data for up to five sites loads right away; uptime starts within 5 minutes.</li>
+  </ol>
+  <p>Flowdeck requests read-only access only: <code>authorized_user:read</code>, <code>sites:read</code>, <code>pages:read</code>, <code>cms:read</code>, <code>forms:read</code>. It never changes your sites. If you click Cancel on the consent screen, nothing is stored.</p>
+  <p>To add sites from another workspace, go to <strong>Settings</strong> and click <strong>Connect more sites</strong>. Each authorization appears under Webflow connections.</p>
+
+  <h2>2. The dashboard</h2>
+  <p>Every connected site is one row:</p>
+  <ul>
+    <li><strong>Status:</strong> Up or Down. A site is marked Down after two failed checks in a row.</li>
+    <li><strong>Uptime 7d and Response:</strong> share of successful checks and the latest response time.</li>
+    <li><strong>SSL:</strong> days until the certificate expires.</li>
+    <li><strong>Publish:</strong> flags Designer changes left unpublished for more than 7 days.</li>
+    <li><strong>Forms 7d / 30d:</strong> form submissions in the last 7 and 30 days.</li>
+    <li><strong>CMS items:</strong> total items, compared with the site plan limit once you set the plan.</li>
+    <li><strong>SEO:</strong> number of SEO issues on published pages.</li>
+  </ul>
+  <p>Uptime and SSL refresh every 5 minutes. Forms, CMS and SEO refresh a few times a day; click <strong>Refresh data</strong> to update them now.</p>
+
+  <h2>3. Site details and settings</h2>
+  <p>Click a site to see 7-day uptime bars, submissions per form, CMS collections and every SEO issue by page (missing or duplicate titles, missing descriptions, titles over 60 and descriptions over 160 characters).</p>
+  <p>In the site's Settings box you can set a client name, the Webflow site plan (for CMS limits), a different URL to check, turn alerts off for that site, pause monitoring or remove the site.</p>
+
+  <h2>4. Alerts and the weekly summary</h2>
+  <p>In <strong>Settings</strong>, enter the email that should receive alerts. Flowdeck emails you once when a problem starts and once when it is resolved:</p>
+  <ul>
+    <li>a site goes down, and when it is back up</li>
+    <li>an SSL certificate expires within 14 days</li>
+    <li>changes have been unpublished for 7 days</li>
+    <li>a form that had submissions receives none for 30 days</li>
+  </ul>
+  <p>The weekly summary arrives every Monday with every site in one table. Both can be switched off in Settings.</p>
+
+  <h2>5. Client reports</h2>
+  <p>On a site page, click <strong>Create report link</strong>. The link opens a white-label page with your brand name (set in Settings) showing 30-day uptime, form submissions, publish state and SEO health. Share it with anyone; no login is needed. Click <strong>New link</strong> to replace it, which stops the old link from working.</p>
+
+  <h2>6. Plans and billing</h2>
+  <ul>
+    <li><strong>Free:</strong> 1 site, every feature</li>
+    <li><strong>Solo:</strong> $9/month, up to 5 sites</li>
+    <li><strong>Studio:</strong> $24/month, up to 15 sites</li>
+    <li><strong>Agency:</strong> $49/month, up to 40 sites</li>
+  </ul>
+  <p>Yearly plans include two months free. Upgrade in <strong>Settings</strong>; payment is handled by Lemon Squeezy. Use <strong>Manage billing</strong> to change plan, download invoices or cancel. After cancelling, your plan stays active until the end of the paid period. Sites above your limit are paused, not deleted, and you choose which sites are monitored from each site's page.</p>
+
+  <h2>7. Uninstall and delete data</h2>
+  <p><strong>Settings, Delete my Flowdeck account</strong> removes your account, sites, check history and tokens. You can also revoke Flowdeck's access in your Webflow dashboard under Apps &amp; Integrations.</p>
+
+  <h2>Support</h2>
+  <p>Write to <a href="mailto:info@silitlabs.com">info@silitlabs.com</a>. See also the <a href="/privacy">Privacy Policy</a> and <a href="/terms">Terms</a>.</p>
+</main>
+</body>
+</html>

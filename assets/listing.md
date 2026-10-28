@@ -58,6 +58,7 @@ Analytics, SEO, Utilities, Marketing, Automation
 - Privacy policy: https://flowdeck.silitlabs.com/privacy
 - Terms of service: https://flowdeck.silitlabs.com/terms
 - Support email: info@silitlabs.com
+- Documentation: https://flowdeck.silitlabs.com/docs
 
 ## Logo
 assets/logo-900.png (900x900 PNG). Upload name: flowdeck-logo.png
