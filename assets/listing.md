@@ -6,7 +6,7 @@ Submission form: https://developers.webflow.com/submit
 Flowdeck
 
 ## Short description (max 100 characters)
-One dashboard for every Webflow site you manage: uptime, SSL, forms, publish state, SEO, client reports.
+One dashboard for every Webflow site you manage: uptime, SSL, forms, SEO and client reports.
 
 ## Long description (markdown, no links)
 **Flowdeck watches all the Webflow sites you manage and tells you before the client does.**
@@ -89,4 +89,4 @@ https://webflow.com/oauth/authorize?response_type=code&client_id=a2bf2dbad020335
 5. Weekly summary email listing every site with uptime, submissions, SEO issues and flags
 
 ## Published testing site
-https://flowdeck-demo.webflow.io (Silit Labs workspace: home page, Guides CMS collection with 5 items, contact form)
+https://flowdeck-demo.webflow.io (home page, Guides CMS collection with 5 items, contact form)
