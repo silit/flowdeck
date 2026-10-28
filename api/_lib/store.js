@@ -12,13 +12,15 @@ const kv = require('./kv');
 const { seal, open, random } = require('./crypto');
 
 const PLAN_LIMITS = { free: 3, pro: 25, agency: 100 };
-const CMS_LIMITS = { basic: 0, cms: 2000, business: 10000, enterprise: 100000, unknown: 2000 };
+const CMS_LIMITS = { basic: 0, cms: 2000, business: 10000, enterprise: 100000, unknown: 0 };
 const UPTIME_KEEP = 2016; // 7 days at 5 minute checks
 
 async function getUser(id) { return kv.getJSON('user:' + id); }
 async function saveUser(user) {
   user.updatedAt = Date.now();
-  await kv.setJSON('user:' + user.id, user);
+  const copy = Object.assign({}, user);
+  delete copy._limit;
+  await kv.setJSON('user:' + user.id, copy);
   await kv.sadd('users:all', user.id);
   return user;
 }

@@ -78,7 +78,7 @@ function statusPill(site) {
 function publishCell(site, now) {
   const ud = unpublishedDays(site, now);
   if (ud == null) return `<span class="muted">Published ${esc(fmtDate(site.lastPublished))}</span>`;
-  return `<span class="pill ${ud >= 7 ? 'warn' : 'off'}">Unpublished ${ud}d</span>`;
+  return `<span class="pill ${ud >= 7 ? 'warn' : 'off'}">Unpublished ${ud < 1 ? '<1d' : ud + 'd'}</span>`;
 }
 
 function sslCell(site, now) {
@@ -100,7 +100,7 @@ function cmsCell(site) {
 
 function dashboard(user, sites, checksBySite, now, notice) {
   now = now || Date.now();
-  const limit = PLAN_LIMITS[user.plan] || PLAN_LIMITS.free;
+  const limit = user._limit || PLAN_LIMITS[user.plan] || PLAN_LIMITS.free;
   const monitored = sites.filter((s) => s.monitored);
   const down = monitored.filter((s) => s.status && s.status.up === false).length;
   const unpub = monitored.filter((s) => (unpublishedDays(s, now) || 0) >= 7).length;
@@ -247,7 +247,7 @@ function report(user, site, checks, now) {
 }
 
 function settings(user, sites, notice) {
-  const limit = PLAN_LIMITS[user.plan] || PLAN_LIMITS.free;
+  const limit = user._limit || PLAN_LIMITS[user.plan] || PLAN_LIMITS.free;
   const body = `
 ${notice ? `<div class="notice">${notice}</div>` : ''}
 <div class="head"><div><h1>Settings</h1><p class="muted">${esc(user.email)}</p></div></div>
@@ -260,7 +260,7 @@ ${notice ? `<div class="notice">${notice}</div>` : ''}
 <label class="check"><input type="checkbox" name="digest" value="1" ${user.settings.digest !== false ? 'checked' : ''}> Weekly summary every Monday</label>
 <div class="actions"><button class="btn primary" type="submit">Save</button></div>
 </form></div>
-<div class="panel" id="plan"><h3>Plan</h3><p style="margin-top:6px">You are on <strong>${esc(user.plan)}</strong>: up to ${limit} monitored sites. ${sites.length} connected.</p>
+<div class="panel" id="plan"><h3>Plan</h3><p style="margin-top:6px">You are on <strong>${esc(user.plan)}</strong>${user.plan === 'free' && limit > PLAN_LIMITS.free ? ' (beta)' : ''}: up to ${limit} monitored sites. ${sites.length} connected.</p>
 <ul class="issues" style="margin-top:8px"><li>Free <span>3 sites</span></li><li>Pro, $29/month <span>25 sites</span></li><li>Agency, $79/month <span>100 sites</span></li></ul>
 <p class="muted small" style="margin-top:10px">Paid plans open soon. Everyone is on the free plan during the beta, with the limit raised to 25 sites.</p></div>
 <div class="panel"><h3>Webflow connections</h3><p class="muted small" style="margin:6px 0 10px">Each connection is one Webflow authorization. Connect again to add sites from another workspace.</p>

@@ -85,7 +85,9 @@ async function currentUser(req) {
   const c = parseCookies(req);
   const s = c.fd_session ? open(c.fd_session) : null;
   if (!s || !s.u || (s.exp && s.exp < Date.now())) return null;
-  return store.getUser(s.u);
+  const user = await store.getUser(s.u);
+  if (user) user._limit = limitFor(user);
+  return user;
 }
 function sessionCookie(userId) {
   return cookie('fd_session', seal({ u: userId, exp: Date.now() + SESSION_TTL * 1000 }), SESSION_TTL);
