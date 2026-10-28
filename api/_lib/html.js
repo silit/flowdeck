@@ -44,7 +44,7 @@ input[type=text],input[type=email],input[type=url],select{width:100%;font:inheri
 .check{display:flex;gap:10px;align-items:flex-start;font-size:14px;font-weight:400}.check input{margin-top:3px;accent-color:var(--accent)}
 .notice{border-left:4px solid var(--accent);padding:12px 14px;background:var(--surface);border-radius:8px;margin-bottom:16px}.notice.bad{border-left-color:var(--bad)}.notice.warn{border-left-color:var(--warn)}
 ul.issues{margin:6px 0 0;padding-left:18px;display:grid;gap:4px;font-size:14px}ul.issues li span{color:var(--muted)}
-.bars{display:flex;gap:2px;align-items:flex-end;height:44px;margin-top:8px}.bars i{flex:1;background:var(--ok);border-radius:2px;min-width:3px}.bars i.bad{background:var(--bad)}.bars i.off{background:var(--line)}
+.bars{display:flex;gap:2px;align-items:flex-end;height:44px;margin-top:8px;width:100%;overflow:hidden}.bars i{flex:1 1 0;min-width:0;background:var(--ok);border-radius:2px}.bars i.bad{background:var(--bad)}.bars i.off{background:var(--line)}
 .empty{padding:40px;text-align:center;color:var(--muted)}
 footer{margin-top:40px;padding-top:16px;border-top:1px solid var(--line);font-size:13px;color:var(--muted);display:flex;flex-wrap:wrap;gap:8px 20px}
 @media(max-width:700px){.top nav{gap:10px;font-size:13px}}
@@ -192,7 +192,7 @@ ${notice ? `<div class="notice">${notice}</div>` : ''}
 <div class="grid">
 <div>
 <div class="panel"><h3>Uptime, last 7 days</h3>${uptimeBars(checks, now)}<p class="muted small" style="margin-top:8px">${s7.total} checks · ${s7.okCount} ok${st.error ? ' · last error: ' + esc(st.error) : ''}</p></div>
-<div class="panel"><h3>Publishing</h3><p style="margin-top:6px">${publishCell(site, now)} <span class="muted small">last published ${esc(fmtDate(site.lastPublished))}, last edited ${esc(fmtDate(site.lastUpdated))}</span></p></div>
+<div class="panel"><h3>Publishing</h3><p style="margin-top:6px">${unpublishedDays(site, now) == null ? '<span class="pill ok">Published</span>' : publishCell(site, now)} <span class="muted small">last published ${esc(fmtDate(site.lastPublished))}, last edited ${esc(fmtDate(site.lastUpdated))}</span></p></div>
 <div class="panel"><h3>Forms, last 30 days</h3>${f ? (f.perForm.length ? `<table style="min-width:0"><thead><tr><th>Form</th><th>7d</th><th>30d</th><th>Last</th></tr></thead><tbody>${f.perForm.map((x) => `<tr><td>${esc(x.name)}</td><td class="num">${x.count7}</td><td class="num">${x.count30}</td><td>${x.last ? ago(x.last, now) : '-'}</td></tr>`).join('')}</tbody></table>` : '<p class="muted" style="margin-top:6px">No submissions in the last 30 days.</p>') : '<p class="muted" style="margin-top:6px">Not synced yet.</p>'}</div>
 <div class="panel"><h3>CMS</h3>${cms ? `<p style="margin-top:6px">${cms.total} items across ${cms.collections.length} collections${CMS_LIMITS[site.settings.plan] ? `, plan limit ${CMS_LIMITS[site.settings.plan]}` : ''}</p><ul class="issues">${cms.collections.slice(0, 15).map((c) => `<li>${esc(c.name)} <span>${c.count}</span></li>`).join('')}</ul>` : '<p class="muted" style="margin-top:6px">Not synced yet.</p>'}</div>
 </div>
@@ -236,7 +236,7 @@ function report(user, site, checks, now) {
 <div class="stat"><div class="n">${st.sslExpiresAt ? 'Valid' : '-'}</div><div class="l">SSL certificate</div></div>
 <div class="stat"><div class="n">${p ? p.issues : '-'}</div><div class="l">SEO issues open</div></div>
 </div>
-<div class="grid">
+<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(min(100%,440px),1fr))">
 <div class="panel"><h3>Availability</h3>${uptimeBars(checks, now)}<p class="muted small" style="margin-top:8px">${s30.total} checks in the period, ${s30.okCount} successful. Checked every 5 minutes.</p></div>
 <div class="panel"><h3>Forms</h3>${f && f.perForm.length ? `<ul class="issues">${f.perForm.map((x) => `<li>${esc(x.name)} <span>${x.count30} submissions</span></li>`).join('')}</ul>` : '<p class="muted" style="margin-top:6px">No submissions in the period.</p>'}</div>
 <div class="panel"><h3>Publishing</h3><p style="margin-top:6px">Last published ${esc(fmtDate(site.lastPublished))}. ${unpublishedDays(site, now) == null ? 'Everything is live.' : 'Some changes are waiting to be published.'}</p></div>
