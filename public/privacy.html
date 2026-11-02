@@ -23,15 +23,15 @@
 <main>
   <nav><a href="/">Flowdeck</a></nav>
   <h1>Privacy Policy</h1>
-  <p class="muted">Last updated: 28 October 2026</p>
+  <p class="muted">Last updated: 3 November 2026</p>
   <h2>What Flowdeck is</h2>
   <p>Flowdeck is a monitoring dashboard for people who manage Webflow sites. It connects to Webflow with the permissions you grant, checks your sites from the outside, and emails you alerts and summaries. This policy explains what it stores and why.</p>
   <h2>Webflow access</h2>
-  <p>When you sign in, Webflow asks you which sites to share. Flowdeck requests read-only scopes: your user id and email, site metadata, pages (titles and SEO fields), form submission dates and form names, and CMS collection item counts. Flowdeck never writes to your sites and never reads the content of form submissions.</p>
-  <p>The access token Webflow issues is stored encrypted in our database so scheduled checks can run while you are away. Revoke it any time from your Webflow workspace, or delete your Flowdeck account.</p>
+  <p>When you sign in, Webflow asks you which sites to share. Flowdeck requests read-only scopes: your user id and email, site metadata, pages (titles and SEO fields), form submission dates and form names, and CMS collection item counts. Flowdeck never writes to your sites and never stores the content of form submissions (only their date and form name).</p>
+  <p>The access token Webflow issues is stored encrypted in our database so scheduled checks can run while you are away. It is never sent to your browser, logged or shared. Disconnecting in Flowdeck's Settings revokes it at Webflow and deletes it; uninstalling the app in your Webflow workspace makes Flowdeck delete it within 15 minutes, together with that connection's sites.</p>
   <h2>What we store</h2>
   <ul>
-    <li>Your Webflow user id, email address and the settings you choose (alert address, agency name).</li>
+    <li>Your Webflow user id, email address and the settings you choose (alert address, agency name). Your email is also used to send one-time sign in links when you ask for one.</li>
     <li>Per site: name, domains, last published and last updated dates, counts of form submissions by date, page titles and descriptions flagged by the SEO checks, CMS item counts.</li>
     <li>Uptime check results (time, status code, response time) for the last 7 days, and SSL certificate expiry dates.</li>
     <li>Alert history, so the same problem is reported once.</li>
@@ -48,7 +48,7 @@
   </ul>
   <p>Our hosting provider keeps standard server logs for a limited period.</p>
   <h2>Deleting your data</h2>
-  <p>Settings, "Delete my Flowdeck account" removes your account, sites, check history and tokens immediately. Your Webflow sites are not affected.</p>
+  <p>Settings, "Delete my Flowdeck account" revokes every Webflow authorization and removes your account, sites, check history and tokens immediately. Your Webflow sites are not affected.</p>
   <h2>Contact</h2>
   <p>Use the support email on the Webflow Marketplace listing or the Flowdeck website.</p>
 </main>

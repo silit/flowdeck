@@ -55,7 +55,7 @@ function layout(title, body, opts) {
   opts = opts || {};
   const nav = opts.user
     ? `<nav><a href="/app">Sites</a><a href="/app/settings">Settings</a><a href="/logout">Sign out</a></nav>`
-    : `<nav><a href="/">Home</a><a href="/auth">Sign in with Webflow</a></nav>`;
+    : `<nav><a href="/">Home</a><a href="/docs">Docs</a><a href="/login">Sign in</a></nav>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>${esc(title)}</title>
 <link rel="icon" href="/favicon.png"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700&family=Figtree:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap">
 <style>${CSS}</style></head><body><div class="wrap">
@@ -63,6 +63,35 @@ function layout(title, body, opts) {
 ${body}
 <footer><span>Flowdeck</span><a href="/privacy">Privacy</a><a href="/terms">Terms</a><span>Not affiliated with Webflow.</span></footer>
 </div></body></html>`;
+}
+
+function planLabel(user, limit) {
+  const paid = user.plan && user.plan !== 'free' && PLANS[user.plan];
+  const base = paid ? PLAN_LIMITS[user.plan] : PLAN_LIMITS.free;
+  const name = paid ? PLANS[user.plan].name : 'Free';
+  return limit > base ? `${name} plan, complimentary limit of ${limit} sites` : `${name} plan, up to ${limit} site${limit === 1 ? '' : 's'}`;
+}
+function lastFetched(sites, now) {
+  const ts = sites.map((s) => s.syncedAt || 0).filter(Boolean);
+  return ts.length ? ago(Math.min(...ts), now) : 'not yet';
+}
+
+function loginPage(q) {
+  const msg = q.sent ? '<div class="panel notice">If that email belongs to a Flowdeck account, a sign in link is on its way. It works once and expires in 15 minutes.</div>'
+    : q.bad ? '<div class="panel notice bad">That email address does not look right.</div>' : '';
+  return layout('Sign in · Flowdeck', `${msg}
+<div class="grid">
+<div class="panel"><h2>Sign in</h2><p class="muted" style="margin:6px 0 12px">Enter the email of your Webflow account. We send you a one-time sign in link, so you do not have to authorize Webflow again.</p>
+<form method="post" action="/login" class="fields"><div class="field"><label for="email">Email</label><input type="email" id="email" name="email" required autocomplete="email"></div>
+<div class="actions"><button class="btn primary" type="submit">Email me a sign in link</button></div></form></div>
+<div class="panel"><h2>New to Flowdeck?</h2><p class="muted" style="margin:6px 0 12px">Install Flowdeck by authorizing it in Webflow. You choose which sites or workspace it can read; access is read only.</p>
+<div class="actions"><a class="btn" href="/auth">Connect your Webflow sites</a></div></div>
+</div>`);
+}
+
+function loginConfirm(token) {
+  return layout('Sign in · Flowdeck', `<div class="panel"><h2>Sign in to Flowdeck</h2><p class="muted" style="margin:6px 0 12px">Press the button to finish signing in.</p>
+<form method="post" action="/l/${esc(token)}"><button class="btn primary" type="submit">Sign in</button></form></div>`);
 }
 
 function errorPage(title, message, back) {
@@ -132,7 +161,7 @@ function dashboard(user, sites, checksBySite, now, notice) {
 
   const body = `
 ${notice ? `<div class="notice">${notice}</div>` : ''}
-<div class="head"><div><h1>Your sites</h1><p class="muted">${monitored.length} monitored · plan ${esc(user.plan)} (${limit} sites) · checks every 5 minutes</p></div>
+<div class="head"><div><h1>Your sites</h1><p class="muted">${monitored.length} monitored · ${esc(planLabel(user, limit))} · checks every 5 minutes · Webflow data fetched ${lastFetched(sites, now)}</p></div>
 <div class="actions"><form method="post" action="/app/sync"><button class="btn" type="submit">Refresh data</button></form><a class="btn primary" href="/auth">Connect sites</a></div></div>
 <div class="stats">
 <div class="stat"><div class="n">${monitored.length}</div><div class="l">Sites</div></div>
@@ -181,8 +210,8 @@ function siteDetail(user, site, checks, now, notice) {
   const reportUrl = site.settings.reportToken ? `${appUrl()}/r/${site.settings.reportToken}` : '';
   const body = `
 ${notice ? `<div class="notice">${notice}</div>` : ''}
-<div class="head"><div><p class="muted small"><a href="/app">Sites</a> / ${esc(site.name)}</p><h1>${esc(site.settings.client || site.name)}</h1><p class="muted">${esc(site.url)} · ${statusPill(site)} ${st.lastCheckAt ? `<span class="small">checked ${ago(st.lastCheckAt, now)}</span>` : ''}</p></div>
-<div class="actions"><a class="btn" href="${esc(site.url)}" target="_blank" rel="noopener">Open site</a>${site.previewUrl ? `<a class="btn" href="${esc(site.previewUrl)}" target="_blank" rel="noopener">Designer</a>` : ''}</div></div>
+<div class="head"><div><p class="muted small"><a href="/app">Sites</a> / ${esc(site.name)}</p><h1>${esc(site.settings.client || site.name)}</h1><p class="muted">${esc(site.url)} · ${statusPill(site)} ${st.lastCheckAt ? `<span class="small">checked ${ago(st.lastCheckAt, now)}</span>` : ''} <span class="small">· Webflow data fetched ${ago(site.syncedAt, now)}</span></p></div>
+<div class="actions"><form method="post" action="/app/sync"><input type="hidden" name="id" value="${esc(site.id)}"><button class="btn" type="submit">Refresh data</button></form><a class="btn" href="${esc(site.url)}" target="_blank" rel="noopener">Open site</a>${site.previewUrl ? `<a class="btn" href="${esc(site.previewUrl)}" target="_blank" rel="noopener">Designer</a>` : ''}</div></div>
 <div class="stats">
 <div class="stat"><div class="n">${s7.uptime == null ? '-' : s7.uptime + '%'}</div><div class="l">Uptime 7d</div></div>
 <div class="stat"><div class="n">${s30.uptime == null ? '-' : s30.uptime + '%'}</div><div class="l">Uptime 30d</div></div>
@@ -284,13 +313,13 @@ ${notice ? `<div class="notice">${notice}</div>` : ''}
 <div class="actions"><button class="btn primary" type="submit">Save</button></div>
 </form></div>
 ${planPanel(user, sites, limit, opts || {})}
-<div class="panel"><h3>Webflow connections</h3><p class="muted small" style="margin:6px 0 10px">Each connection is one Webflow authorization. Connect again to add sites from another workspace.</p>
-<ul class="issues">${user.connections.map((c) => `<li>${esc(c.label || 'Connection')} <span>${new Date(c.authorizedAt).toISOString().slice(0, 10)}, ${sites.filter((s) => s.connectionId === c.id).length} sites</span></li>`).join('') || '<li class="muted">None yet</li>'}</ul>
+<div class="panel"><h3>Webflow connections</h3><p class="muted small" style="margin:6px 0 10px">Each connection is one Webflow authorization. Disconnect revokes Flowdeck's access in Webflow and deletes the stored token and that connection's sites from Flowdeck. Uninstalling the app in Webflow has the same effect within 15 minutes.</p>
+<ul class="issues plans">${user.connections.map((c) => `<li><span>${esc(c.label || 'Connection')} <span class="muted">authorized ${new Date(c.authorizedAt).toISOString().slice(0, 10)}, ${sites.filter((s) => s.connectionId === c.id).length} sites</span></span><form method="post" action="/app/connection/remove"><input type="hidden" name="id" value="${esc(c.id)}"><button class="btn sm" type="submit">Disconnect</button></form></li>`).join('') || '<li class="muted">None yet</li>'}</ul>
 <div class="actions" style="margin-top:10px"><a class="btn" href="/auth">Connect more sites</a></div></div>
-<div class="panel"><h3>Delete account</h3><p class="muted small" style="margin:6px 0 10px">Removes your sites, checks and tokens from Flowdeck. Your Webflow sites are not affected.</p>
+<div class="panel"><h3>Delete account</h3><p class="muted small" style="margin:6px 0 10px">Revokes every Webflow authorization and removes your sites, checks and tokens from Flowdeck. Your Webflow sites are not affected.</p>
 <form method="post" action="/app/delete"><button class="btn sm danger" type="submit">Delete my Flowdeck account</button></form></div>
 </div>`;
   return layout('Settings · Flowdeck', body, { user });
 }
 
-module.exports = { layout, errorPage, dashboard, siteDetail, report, settings, esc, ago, fmtDate };
+module.exports = { layout, errorPage, dashboard, siteDetail, report, settings, loginPage, loginConfirm, esc, ago, fmtDate };

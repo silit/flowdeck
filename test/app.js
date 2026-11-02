@@ -57,7 +57,7 @@ const resend = http.createServer(async (req, res) => { const body = await readJS
 const DAY = 86400000;
 const now = Date.now();
 function iso(ms) { return new Date(ms).toISOString(); }
-const wfState = { sites: [], submissions: {}, pages: {}, collections: {}, counts: {} };
+const wfState = { sites: [], submissions: {}, pages: {}, collections: {}, counts: {}, revoked: false, revokeCalls: [] };
 const webflow = http.createServer(async (req, res) => {
   const body = await readJSON(req);
   const u = new URL(req.url, 'http://x');
@@ -69,7 +69,8 @@ const webflow = http.createServer(async (req, res) => {
     if (body.code === 'install-code' && body.redirect_uri) return json(res, 400, { error: 'invalid_grant', error_description: 'redirect_uri mismatch' });
     return json(res, 200, { access_token: 'tok_abc', token_type: 'bearer' });
   }
-  if ((req.headers.authorization || '') !== 'Bearer tok_abc') return json(res, 401, { message: 'Unauthorized' });
+  if (u.pathname === '/oauth/revoke_authorization') { wfState.revokeCalls.push(body); return json(res, 200, { didRevoke: true }); }
+  if (wfState.revoked || (req.headers.authorization || '') !== 'Bearer tok_abc') return json(res, 401, { message: 'Request not authorized' });
   const p = u.pathname;
   let m;
   if (p === '/v2/token/authorized_by') return json(res, 200, { id: 'user_1', email: 'owner@agency.com', firstName: 'Ada', lastName: 'Lovelace' });
@@ -167,7 +168,7 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
 
   console.log('2. dashboard');
   const anon = await request(port, 'GET', '/app');
-  assert(anon.status === 302 && anon.headers.location === '/auth', 'anonymous dashboard redirects to sign in');
+  assert(anon.status === 302 && anon.headers.location === '/login', 'anonymous dashboard goes to the email sign in page, not to Webflow OAuth');
   const dash = await request(port, 'GET', '/app', { headers: { Cookie: session } });
   assert(dash.status === 200 && dash.body.includes('Acme Dental') && dash.body.includes('Blue Yachts') && dash.body.includes('Paused'), 'dashboard lists sites and the paused one');
   assert(dash.body.includes('<td class="num">2 <span class="muted">/ 3</span></td>'), 'dashboard shows form counts');
@@ -292,7 +293,42 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
   const instDash = await request(port, 'GET', '/app', { headers: { Cookie: cookiesFrom(inst) } });
   assert(instDash.status === 200 && instDash.body.includes('Acme Dental'), 'dashboard opens after a Marketplace install');
   const bad = await request(port, 'GET', '/callback?code=wrong-code');
-  assert(bad.status === 400 && bad.body.includes('Could not sign in'), 'a bad code shows a sign in error page, not a crash');
+  assert(bad.status === 400 && bad.body.includes('Could not connect to Webflow'), 'a bad code shows an error page, not a crash');
+  const forged = await request(port, 'GET', '/callback?code=good-code&state=forged');
+  assert(forged.status === 400 && forged.body.includes('Sign in expired'), 'a state without the matching cookie is rejected before the token exchange');
+  const denied = await request(port, 'GET', '/callback?error=access_denied&error_description=The+user+denied+access');
+  assert(denied.status === 400 && denied.body.includes('Authorization cancelled'), 'denying on the Webflow consent screen shows Authorization cancelled');
+  const conns = JSON.parse(db.get('user:user_1')).connections;
+  assert(conns.length === 1, 'a new authorization replaces the old connection instead of piling up');
+  assert(wfState.revokeCalls.length === 1 && wfState.revokeCalls[0].access_token === 'tok_abc', 'the replaced token is revoked at Webflow');
+
+  console.log('6c. returning users sign in with an email link, not OAuth');
+  const lp = await request(port, 'GET', '/login');
+  assert(lp.status === 200 && lp.body.includes('Email me a sign in link'), 'sign in page');
+  const before = emails.length;
+  const unknown = await request(port, 'POST', '/login', { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form({ email: 'nobody@else.com' }) });
+  assert(unknown.status === 302 && unknown.headers.location === '/login?sent=1' && emails.length === before, 'unknown email gets the same answer and no email');
+  const ask = await request(port, 'POST', '/login', { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form({ email: 'Owner@Agency.com' }) });
+  const mail = emails[emails.length - 1];
+  const link = (mail && mail.text.match(/https:\/\/app\.test(\/l\/[\w-]+)/) || [])[1];
+  assert(ask.status === 302 && emails.length === before + 1 && mail.to[0] === 'owner@agency.com' && !!link, 'sign in link emailed to the account email');
+  const again = await request(port, 'POST', '/login', { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form({ email: 'owner@agency.com' }) });
+  assert(again.status === 302 && emails.length === before + 1, 'one link per minute per address');
+  const view = await request(port, 'GET', link);
+  assert(view.status === 200 && view.body.includes('action="' + link + '"'), 'opening the link only shows a button (mail scanners cannot use it up)');
+  const use = await request(port, 'POST', link, { headers: { Origin: 'https://app.test' } });
+  assert(use.status === 302 && use.headers.location === '/app' && /fd_session=/.test(cookiesFrom(use)), 'pressing the button signs in');
+  const reuse = await request(port, 'POST', link, { headers: { Origin: 'https://app.test' } });
+  assert(reuse.status === 400 && reuse.body.includes('Link expired'), 'a used link does not work again');
+  const s2 = cookiesFrom(use);
+  const p2 = (pp, data) => request(port, 'POST', pp, { headers: { Cookie: s2, 'Content-Type': 'application/x-www-form-urlencoded', Origin: 'https://app.test' }, body: form(data) });
+
+  console.log('6d. the URL to check must be on the site\'s own domains');
+  const evil = await p2('/app/site/settings', { id: 'siteA', client: 'Acme', plan: 'cms', checkUrl: 'http://169.254.169.254/latest/meta-data', alerts: '1' });
+  assert(evil.status === 400 && evil.body.includes('URL not allowed'), 'a URL outside the site domains is refused');
+  const own = await p2('/app/site/settings', { id: 'siteA', client: 'Acme', plan: 'cms', checkUrl: 'http://127.0.0.1:' + aPort + '/contact', alerts: '1' });
+  assert(own.status === 302 && JSON.parse(db.get('site:siteA')).settings.checkUrl.endsWith('/contact'), 'a path on the site domain is accepted');
+  await p2('/app/site/settings', { id: 'siteA', client: 'Acme', plan: 'cms', checkUrl: '', alerts: '1' });
 
   console.log('7. settings, remove site, delete account');
   const st = await request(port, 'POST', '/app/settings', { headers: { Cookie: session, 'Content-Type': 'application/x-www-form-urlencoded', Origin: 'https://app.test' }, body: form({ alertEmail: 'alerts@agency.com', brand: 'Studio X', alerts: '1', digest: '1' }) });
@@ -301,6 +337,32 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
   assert(rm.status === 302 && !db.has('site:siteB') && !JSON.parse(db.get('user:user_1')).siteIds.includes('siteB'), 'site removed');
   const del = await request(port, 'POST', '/app/delete', { headers: { Cookie: session, 'Content-Type': 'application/x-www-form-urlencoded', Origin: 'https://app.test' }, body: '' });
   assert(del.status === 302 && !db.has('user:user_1') && !db.has('site:siteA'), 'account and sites deleted');
+  console.log('8. uninstall in Webflow: token deleted, sites removed, API calls stop');
+  const re = await request(port, 'GET', '/callback?code=install-code');
+  const s3 = cookiesFrom(re);
+  assert(re.status === 302 && JSON.parse(db.get('user:user_1')).siteIds.length === 3, 'reinstalled with 3 sites');
+  wfState.revoked = true;
+  const syncR = await request(port, 'GET', '/cron/sync?key=cronkey');
+  const u8 = JSON.parse(db.get('user:user_1'));
+  assert(syncR.status === 200 && u8.connections.length === 0 && u8.siteIds.length === 0 && !db.has('site:siteA') && !db.has('site:siteB'), 'revoked authorization: token and its sites deleted');
+  const syncAgain = JSON.parse((await request(port, 'GET', '/cron/sync?key=cronkey')).body);
+  assert(syncAgain.synced === 0, 'no more Webflow API calls for that connection');
+  const d8 = await request(port, 'GET', '/app', { headers: { Cookie: s3 } });
+  assert(d8.status === 200 && d8.body.includes('Webflow access for') && d8.body.includes('deleted the stored token'), 'the user is told once on the dashboard');
+  wfState.revoked = false;
+
+  console.log('9. disconnect in Settings revokes the token at Webflow');
+  const re2 = await request(port, 'GET', '/callback?code=install-code');
+  const s4 = cookiesFrom(re2);
+  const connId = JSON.parse(db.get('user:user_1')).connections[0].id;
+  const calls = wfState.revokeCalls.length;
+  const dis = await request(port, 'POST', '/app/connection/remove', { headers: { Cookie: s4, 'Content-Type': 'application/x-www-form-urlencoded', Origin: 'https://app.test' }, body: form({ id: connId }) });
+  const u9 = JSON.parse(db.get('user:user_1'));
+  assert(dis.status === 302 && dis.headers.location.startsWith('/app/settings?notice=') && u9.connections.length === 0 && u9.siteIds.length === 0, 'disconnect removes the connection and its sites');
+  assert(wfState.revokeCalls.length === calls + 1 && wfState.revokeCalls[calls].client_secret === 'sec', 'disconnect calls Webflow revoke_authorization');
+  const so = await request(port, 'GET', '/logout', { headers: { Cookie: s4 } });
+  assert(so.status === 302 && wfState.revokeCalls.length === calls + 1, 'signing out does not revoke Webflow access');
+
   const health = await request(port, 'GET', '/health');
   assert(health.status === 200 && health.body === 'ok', 'health ok');
 

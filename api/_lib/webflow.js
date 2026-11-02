@@ -38,7 +38,10 @@ function authorizeUrl({ clientId, redirectUri, state }) {
   }).toString();
 }
 
-async function tokenRequest({ clientId, clientSecret, code, redirectUri }) {
+// One token request per authorization code (codes are single use and are never retried or logged).
+// Webflow wants redirect_uri here only when the authorization link had one: our own /auth link
+// sends it, the Marketplace install link does not.
+async function exchangeCode({ clientId, clientSecret, code, redirectUri }) {
   const body = { client_id: clientId, client_secret: clientSecret, code, grant_type: 'authorization_code' };
   if (redirectUri) body.redirect_uri = redirectUri;
   const res = await fetch(API_BASE() + '/oauth/access_token', {
@@ -55,24 +58,23 @@ async function tokenRequest({ clientId, clientSecret, code, redirectUri }) {
   return data.access_token;
 }
 
-// Webflow wants redirect_uri in the token request only when the authorization link had one.
-// Our own /auth link sends it; the Marketplace install link may not. withRedirect says which
-// flow started this sign in; if Webflow rejects that form, the other form is tried once.
-async function exchangeCode({ clientId, clientSecret, code, redirectUri, withRedirect }) {
-  const first = withRedirect === false ? null : redirectUri;
-  const second = first ? null : redirectUri;
+// Revokes an access token at Webflow (disconnect and account deletion). Best effort: the token is
+// deleted from our storage either way.
+async function revokeToken({ clientId, clientSecret, token }) {
+  if (!clientId || !clientSecret || !token) return false;
   try {
-    return await tokenRequest({ clientId, clientSecret, code, redirectUri: first });
-  } catch (e1) {
-    if (!second && !first) throw e1;
-    try {
-      return await tokenRequest({ clientId, clientSecret, code, redirectUri: second });
-    } catch (e2) {
-      e1.message = e1.message + ' / ' + e2.message;
-      throw e1;
-    }
-  }
+    const res = await fetch(API_BASE() + '/oauth/revoke_authorization', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, access_token: token })
+    });
+    const data = await res.json().catch(() => ({}));
+    return !!(res.ok && data && data.didRevoke !== false);
+  } catch (e) { return false; }
 }
+
+// True when Webflow says the token no longer works (authorization revoked or app uninstalled).
+const isRevoked = (e) => !!e && e.status === 401;
 
 const authorizedBy = (token) => call(token, 'GET', '/token/authorized_by');
 const listSites = async (token) => ((await call(token, 'GET', '/sites')) || {}).sites || [];
@@ -124,4 +126,4 @@ async function listSubmissions(token, siteId, since, max) {
   return out;
 }
 
-module.exports = { SCOPES, call, authorizeUrl, exchangeCode, authorizedBy, listSites, getSite, listPages, listCollections, countItems, listSubmissions };
+module.exports = { SCOPES, call, authorizeUrl, exchangeCode, revokeToken, isRevoked, authorizedBy, listSites, getSite, listPages, listCollections, countItems, listSubmissions };

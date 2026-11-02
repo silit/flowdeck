@@ -8,8 +8,10 @@
 //   alert:{siteId}:{t}   open alert state
 //   report:{token}       siteId for public report links
 //   lock:{name}          cron locks
+//   email:{address}      user id for an email (sign in by email link)
+//   login:{sha256}       one-time sign in link, 15 minutes
 const kv = require('./kv');
-const { seal, open, random } = require('./crypto');
+const { seal, open, random, sha256 } = require('./crypto');
 
 const PLAN_LIMITS = { free: 1, solo: 5, studio: 15, agency: 40 };
 const CMS_LIMITS = { basic: 0, cms: 2000, business: 10000, enterprise: 100000, unknown: 0 };
@@ -35,8 +37,38 @@ async function saveUser(user) {
   delete copy._limit;
   await kv.setJSON('user:' + user.id, copy);
   await kv.sadd('users:all', user.id);
+  if (user.email) await kv.setJSON('email:' + String(user.email).toLowerCase(), { u: user.id });
   return user;
 }
+
+// Returning users sign in with a one-time email link; Webflow OAuth runs only to install or add sites.
+async function findUserByEmail(email) {
+  const e = String(email || '').trim().toLowerCase();
+  if (!e) return null;
+  const idx = await kv.getJSON('email:' + e);
+  if (idx && idx.u) {
+    const u = await getUser(idx.u);
+    if (u && String(u.email || '').toLowerCase() === e) return u;
+  }
+  for (const id of await allUserIds()) {
+    const u = await getUser(id);
+    if (u && String(u.email || '').toLowerCase() === e) return u;
+  }
+  return null;
+}
+async function createLoginToken(userId) {
+  const t = random(24);
+  await kv.setJSON('login:' + sha256(t), { u: userId, at: Date.now() }, 900);
+  return t;
+}
+async function peekLoginToken(t) { return t ? kv.getJSON('login:' + sha256(t)) : null; }
+async function consumeLoginToken(t) {
+  if (!t) return null;
+  const rec = await kv.getJSON('login:' + sha256(t));
+  if (rec) await kv.del('login:' + sha256(t));
+  return rec;
+}
+async function loginRateOk(email) { return kv.setNX('loginrl:' + String(email).toLowerCase(), { at: Date.now() }, 60); }
 async function allUserIds() { return kv.smembers('users:all'); }
 
 function newUser(info) {
@@ -58,8 +90,28 @@ function addConnection(user, token, label) {
   return conn;
 }
 function tokenOf(conn) {
+  if (!conn || !conn.tokenEnc) return null;
   const o = open(conn.tokenEnc);
   return o ? o.t : null;
+}
+
+// Removes a Webflow connection and every site that came with it. Used when the user disconnects,
+// when Webflow reports the authorization was revoked (app uninstalled), and when a new
+// authorization replaces an old one. Returns the removed connection (with its token) or null.
+async function removeConnection(user, connId) {
+  const conn = (user.connections || []).find((c) => c.id === connId);
+  if (!conn) return null;
+  user.connections = user.connections.filter((c) => c.id !== connId);
+  const sites = await getSites(user.siteIds || []);
+  const gone = sites.filter((s) => s.connectionId === connId);
+  for (const site of gone) {
+    if (site.settings && site.settings.reportToken) await deleteReport(site.settings.reportToken);
+    await kv.del(...['down', 'ssl', 'unpublished', 'forms_silent'].map((t) => `alert:${site.id}:${t}`));
+    await deleteSite(site.id);
+  }
+  user.siteIds = (user.siteIds || []).filter((id) => !gone.some((s) => s.id === id));
+  conn._sites = gone.map((s) => s.name);
+  return conn;
 }
 
 async function getSite(id) { return kv.getJSON('site:' + id); }
@@ -138,9 +190,10 @@ async function siteIdForReport(token) {
 }
 async function deleteReport(token) { return token ? kv.del('report:' + token) : 0; }
 
-async function deleteUser(id) {
+async function deleteUser(id, email) {
   await kv.del('user:' + id);
   await kv.srem('users:all', id);
+  if (email) await kv.del('email:' + String(email).toLowerCase());
 }
 
 // Keeps at most `limit` sites monitored. Sites already monitored keep their place (oldest first),
@@ -161,7 +214,8 @@ async function unlock(name) { return kv.del('lock:' + name); }
 
 module.exports = {
   PLAN_LIMITS, CMS_LIMITS, UPTIME_KEEP, limitFor,
-  getUser, saveUser, allUserIds, newUser, addConnection, tokenOf,
+  getUser, saveUser, allUserIds, newUser, addConnection, tokenOf, removeConnection,
+  findUserByEmail, createLoginToken, peekLoginToken, consumeLoginToken, loginRateOk,
   getSite, getSites, saveSite, allSiteIds, deleteSite, newSite, refreshMeta, primaryUrl,
   pushCheck, recentChecks, getAlert, setAlert, clearAlert, ensureReportToken, siteIdForReport, deleteReport, deleteUser, enforceLimit, lock, unlock
 };

@@ -32,9 +32,10 @@
   <ol>
     <li>Open <a href="/">flowdeck.silitlabs.com</a> and click <strong>Connect your Webflow sites</strong>, or install Flowdeck from the Webflow Marketplace.</li>
     <li>Webflow shows a consent screen. Pick the sites or workspaces you want Flowdeck to monitor and click <strong>Authorize App</strong>.</li>
-    <li>You land on the dashboard. The first data for up to five sites loads right away; uptime starts within 5 minutes.</li>
+    <li>You land on the dashboard. The first data for up to three sites loads right away, the rest within minutes; uptime starts within 5 minutes.</li>
   </ol>
-  <p>Flowdeck requests read-only access only: <code>authorized_user:read</code>, <code>sites:read</code>, <code>pages:read</code>, <code>cms:read</code>, <code>forms:read</code>. It never changes your sites. If you click Cancel on the consent screen, nothing is stored.</p>
+  <p><strong>Signing in later:</strong> click <strong>Sign in</strong> and enter the email of your Webflow account. Flowdeck emails you a one-time link that expires in 15 minutes. You only authorize Webflow again when you want to add sites.</p>
+  <p>Flowdeck requests read-only access only: <code>authorized_user:read</code>, <code>sites:read</code>, <code>pages:read</code>, <code>cms:read</code>, <code>forms:read</code>. It never changes your sites. If you click Cancel on the consent screen, Flowdeck shows an "Authorization cancelled" page and nothing is stored.</p>
   <p>To add sites from another workspace, go to <strong>Settings</strong> and click <strong>Connect more sites</strong>. Each authorization appears under Webflow connections.</p>
 
   <h2>2. The dashboard</h2>
@@ -48,11 +49,11 @@
     <li><strong>CMS items:</strong> total items, compared with the site plan limit once you set the plan.</li>
     <li><strong>SEO:</strong> number of SEO issues on published pages.</li>
   </ul>
-  <p>Uptime and SSL refresh every 5 minutes. Forms, CMS and SEO refresh a few times a day; click <strong>Refresh data</strong> to update them now.</p>
+  <p>Uptime and SSL refresh every 5 minutes. Forms, CMS and SEO refresh a few times a day; the header shows when Webflow data was last fetched, and <strong>Refresh data</strong> on the dashboard or on a site page updates it now. Uptime, response time, SSL and SEO findings are Flowdeck's own measurements; site names, pages, forms and CMS counts come from Webflow and are never changed.</p>
 
   <h2>3. Site details and settings</h2>
   <p>Click a site to see 7-day uptime bars, submissions per form, CMS collections and every SEO issue by page (missing or duplicate titles, missing descriptions, titles over 60 and descriptions over 160 characters).</p>
-  <p>In the site's Settings box you can set a client name, the Webflow site plan (for CMS limits), a different URL to check, turn alerts off for that site, pause monitoring or remove the site.</p>
+  <p>In the site's Settings box you can set a client name, the Webflow site plan (for CMS limits), a different URL to check (it must be on one of the site's own domains), turn alerts off for that site, pause monitoring or remove the site.</p>
 
   <h2>4. Alerts and the weekly summary</h2>
   <p>In <strong>Settings</strong>, enter the email that should receive alerts. Flowdeck emails you once when a problem starts and once when it is resolved:</p>
@@ -77,7 +78,12 @@
   <p>Yearly plans include two months free. Upgrade in <strong>Settings</strong>; payment is handled by Lemon Squeezy. Use <strong>Manage billing</strong> to change plan, download invoices or cancel. After cancelling, your plan stays active until the end of the paid period. Sites above your limit are paused, not deleted, and you choose which sites are monitored from each site's page.</p>
 
   <h2>7. Uninstall and delete data</h2>
-  <p><strong>Settings, Delete my Flowdeck account</strong> removes your account, sites, check history and tokens. You can also revoke Flowdeck's access in your Webflow dashboard under Apps &amp; Integrations.</p>
+  <ul>
+    <li><strong>Disconnect a connection:</strong> Settings, Webflow connections, <strong>Disconnect</strong>. Flowdeck revokes its access in Webflow, deletes the stored token and removes that connection's sites from Flowdeck.</li>
+    <li><strong>Uninstall in Webflow:</strong> remove Flowdeck in your Webflow workspace under Apps &amp; Integrations. Within 15 minutes Flowdeck sees that access is gone, deletes the token and those sites and stops calling the Webflow API.</li>
+    <li><strong>Delete everything:</strong> Settings, <strong>Delete my Flowdeck account</strong> revokes every Webflow authorization and removes your account, sites, check history and tokens immediately.</li>
+  </ul>
+  <p>Signing out only ends your Flowdeck session; it does not remove Webflow access.</p>
 
   <h2>Support</h2>
   <p>Write to <a href="mailto:info@silitlabs.com">info@silitlabs.com</a>. See also the <a href="/privacy">Privacy Policy</a> and <a href="/terms">Terms</a>.</p>

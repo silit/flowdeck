@@ -1,6 +1,10 @@
 {
   "rewrites": [
     {
+      "source": "/l/:token",
+      "destination": "/api/index?path=l/:token"
+    },
+    {
       "source": "/billing/webhook",
       "destination": "/api/billing-webhook"
     },
@@ -33,7 +37,7 @@
       "destination": "/api/index?path=cron/:job"
     },
     {
-      "source": "/:p(auth|callback|logout|health)",
+      "source": "/:p(auth|callback|login|logout|health)",
       "destination": "/api/index?path=:p"
     }
   ],

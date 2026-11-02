@@ -55,7 +55,12 @@ async function syncSite(site, token, opts) {
   try {
     const meta = await wf.getSite(token, site.id);
     store.refreshMeta(site, meta);
-  } catch (e) { data.errors.push('site: ' + e.message); }
+  } catch (e) {
+    // The authorization is gone (app uninstalled or access revoked in Webflow): stop here so the
+    // caller deletes the token and stops calling the API for this connection.
+    if (wf.isRevoked(e)) throw e;
+    data.errors.push('site: ' + e.message);
+  }
 
   try {
     const pages = await wf.listPages(token, site.id, limits.pages);

@@ -14,6 +14,7 @@ const html = require('./_lib/html');
 const { seal, open, random, timingEqual } = require('./_lib/crypto');
 const { syncSite } = require('./_lib/sync');
 const billing = require('./_lib/billing');
+const email = require('./_lib/email');
 
 const ENV = () => ({
   clientId: process.env.WEBFLOW_CLIENT_ID || '',
@@ -107,16 +108,17 @@ async function handleCallback(req, res) {
   const c = parseCookies(req);
   if (q.error) return send(res, 400, html.errorPage('Authorization cancelled', String(q.error_description || q.error), '/'));
   if (!q.code) return send(res, 400, html.errorPage('Missing code', 'Webflow did not return an authorization code.', '/'));
-  if (q.state && c.fd_state && q.state !== c.fd_state) return send(res, 400, html.errorPage('State mismatch', 'The sign in request did not match. Start again.', '/'));
+  // Our /auth link always carries a state that must match the cookie set there. The Marketplace
+  // install link (Webflow's recommended form) carries no state and no redirect_uri.
+  const fromAuthLink = !!q.state;
+  if (fromAuthLink && (!c.fd_state || !timingEqual(q.state, c.fd_state))) return send(res, 400, html.errorPage('Sign in expired', 'This sign in request did not match the one we started, or it took longer than 10 minutes. Please start again.', '/auth'));
 
   const started = Date.now();
-  // A state value means the sign in started at our /auth link (which sends redirect_uri);
-  // no state means it started at the Marketplace install link.
   let token;
-  try { token = await wf.exchangeCode({ clientId: env.clientId, clientSecret: env.clientSecret, code: q.code, redirectUri: env.appUrl + '/callback', withRedirect: !!q.state }); }
+  try { token = await wf.exchangeCode({ clientId: env.clientId, clientSecret: env.clientSecret, code: q.code, redirectUri: fromAuthLink ? env.appUrl + '/callback' : null }); }
   catch (e) {
-    console.error('[flowdeck] token exchange failed', q.state ? 'auth-link' : 'install-link', e.status || '', e.message);
-    return send(res, 400, html.errorPage('Could not sign in', e.message + ' Please start again from the button below.', '/auth'));
+    console.error('[flowdeck] token exchange failed', fromAuthLink ? 'auth-link' : 'install-link', e.status || '', e.message);
+    return send(res, 400, html.errorPage('Could not connect to Webflow', 'Webflow did not accept the authorization (' + e.message + '). Please start again.', '/auth'));
   }
 
   let info;
@@ -145,6 +147,14 @@ async function handleCallback(req, res) {
     await store.saveSite(site);
     if (!user.siteIds.includes(site.id)) { user.siteIds.push(site.id); added++; }
   }
+  // A new authorization can replace an older one for the same sites: drop connections left with no sites.
+  for (const old of user.connections.filter((x) => x.id !== conn.id)) {
+    const still = (await store.getSites(user.siteIds)).some((s) => s.connectionId === old.id);
+    if (!still) {
+      const removed = await store.removeConnection(user, old.id);
+      if (removed) await wf.revokeToken({ clientId: env.clientId, clientSecret: env.clientSecret, token: store.tokenOf(removed) });
+    }
+  }
   await store.saveUser(user);
   await store.enforceLimit(user, limit);
 
@@ -157,7 +167,7 @@ async function handleCallback(req, res) {
     if (Date.now() - started > BUDGET_MS) break;
     try {
       await syncSite(site, token, { pages: 100, collections: 10, submissions: 100 });
-      const url = (site.settings && site.settings.checkUrl) || site.url;
+      const url = checks.checkUrlOf(site);
       if (url && Date.now() - started < BUDGET_MS) {
         const chk = await checks.httpCheck(url, 5000);
         site.status = Object.assign(site.status || {}, { lastCheckAt: chk.t, code: chk.code, ms: chk.ms, up: chk.ok ? true : null, fails: chk.ok ? 0 : 1, since: chk.t, error: chk.error || '' });
@@ -180,13 +190,16 @@ async function handleApp(req, res, user) {
   const checksBySite = {};
   for (const s of sites) checksBySite[s.id] = await store.recentChecks(s.id);
   let notice = q.notice ? html.esc(q.notice) : '';
+  if (user.notice) { notice = html.esc(user.notice); delete user.notice; await store.saveUser(user); }
   if (q.added) notice = `${html.esc(q.added)} site${q.added === '1' ? '' : 's'} connected. First data is loading; uptime starts within 5 minutes.`;
   if (q.synced) notice = 'Data refreshed.';
   send(res, 200, html.dashboard(user, sites, checksBySite, Date.now(), notice));
 }
 
 async function handleSync(req, res, user) {
-  const sites = (await store.getSites(user.siteIds || [])).filter((s) => s.monitored).sort((a, b) => (a.syncedAt || 0) - (b.syncedAt || 0)).slice(0, 10);
+  const b = await readBody(req);
+  const one = b.id ? await ownedSite(user, String(b.id)) : null;
+  const sites = one ? [one] : (await store.getSites(user.siteIds || [])).filter((s) => s.monitored).sort((a, b) => (a.syncedAt || 0) - (b.syncedAt || 0)).slice(0, 10);
   for (const site of sites) {
     const conn = user.connections.find((c) => c.id === site.connectionId);
     const token = conn && store.tokenOf(conn);
@@ -196,8 +209,15 @@ async function handleSync(req, res, user) {
       await syncSite(site, token, { pages: 300, collections: 20, submissions: 300 });
       if (site.data && site.data.forms) site.data.forms.before30 = before ? Math.max(before.total30 || 0, before.before30 || 0) : 0;
       await store.saveSite(site);
-    } catch (e) { /* keep going */ }
+    } catch (e) {
+      if (wf.isRevoked(e)) {
+        const removed = await store.removeConnection(user, site.connectionId);
+        if (removed) user.notice = revokedNotice(removed);
+        await store.saveUser(user);
+      }
+    }
   }
+  if (one && (user.siteIds || []).includes(one.id)) return redirect(res, '/app/site?id=' + encodeURIComponent(one.id) + '&synced=1');
   redirect(res, '/app?synced=1');
 }
 
@@ -212,7 +232,7 @@ async function handleSitePage(req, res, user) {
   const site = await ownedSite(user, q.id);
   if (!site) return send(res, 404, html.errorPage('Site not found', 'That site is not connected to your account.'));
   const recent = await store.recentChecks(site.id);
-  const notice = q.full ? `Your plan monitors up to ${user._limit} site${user._limit === 1 ? '' : 's'}. Pause another site or <a href="/app/settings#plan">upgrade</a>.` : (q.saved ? 'Settings saved.' : '');
+  const notice = q.full ? `Your plan monitors up to ${user._limit} site${user._limit === 1 ? '' : 's'}. Pause another site or <a href="/app/settings#plan">upgrade</a>.` : (q.saved ? 'Settings saved.' : (q.synced ? 'Data refreshed from Webflow.' : ''));
   send(res, 200, html.siteDetail(user, site, recent, Date.now(), notice));
 }
 
@@ -223,7 +243,10 @@ async function handleSiteSettings(req, res, user) {
   site.settings.client = String(b.client || '').trim().slice(0, 80);
   site.settings.plan = ['unknown', 'basic', 'cms', 'business', 'enterprise'].includes(b.plan) ? b.plan : 'unknown';
   const url = String(b.checkUrl || '').trim();
-  site.settings.checkUrl = /^https?:\/\/[^\s]+$/.test(url) ? url : '';
+  if (url && !checks.allowedCheckUrl(site, url)) {
+    return send(res, 400, html.errorPage('URL not allowed', 'The URL to check must be an https address on one of this site\'s own domains: ' + checks.siteHosts(site).join(', ') + '.', '/app/site?id=' + encodeURIComponent(site.id)));
+  }
+  site.settings.checkUrl = url;
   site.settings.alerts = b.alerts === '1' || b.alerts === 'on';
   await store.saveSite(site);
   redirect(res, '/app/site?id=' + encodeURIComponent(site.id) + '&saved=1');
@@ -290,7 +313,7 @@ async function handleSiteRemove(req, res, user) {
 async function handleSettingsPage(req, res, user) {
   const q = queryOf(req);
   const sites = await store.getSites(user.siteIds || []);
-  const notice = q.upgraded ? 'Thanks! Your plan updates as soon as the payment is confirmed, usually within a minute.' : (q.saved ? 'Settings saved.' : '');
+  const notice = q.upgraded ? 'Thanks! Your plan updates as soon as the payment is confirmed, usually within a minute.' : (q.saved ? 'Settings saved.' : (q.notice ? html.esc(q.notice) : ''));
   send(res, 200, html.settings(user, sites, notice, { billing: billing.enabled() }));
 }
 
@@ -307,6 +330,8 @@ async function handleSettingsSave(req, res, user) {
 }
 
 async function handleDelete(req, res, user) {
+  const env = ENV();
+  for (const c of user.connections || []) await wf.revokeToken({ clientId: env.clientId, clientSecret: env.clientSecret, token: store.tokenOf(c) });
   for (const id of user.siteIds || []) {
     const site = await store.getSite(id);
     if (site && site.userId === user.id) {
@@ -315,9 +340,67 @@ async function handleDelete(req, res, user) {
       await store.deleteSite(site.id);
     }
   }
-  await store.deleteUser(user.id);
+  await store.deleteUser(user.id, user.email);
   res.setHeader('Set-Cookie', [cookie('fd_session', '', 0)]);
   redirect(res, '/?deleted=1');
+}
+
+function revokedNotice(conn) {
+  const n = (conn._sites || []).length;
+  return `Webflow access for ${conn.label || 'one connection'} was removed (the app was uninstalled or access was revoked in Webflow). Flowdeck deleted the stored token and its ${n} site${n === 1 ? '' : 's'}. Connect again to bring them back.`;
+}
+
+async function handleDisconnect(req, res, user) {
+  const env = ENV();
+  const b = await readBody(req);
+  const removed = await store.removeConnection(user, String(b.id || ''));
+  if (!removed) return send(res, 404, html.errorPage('Connection not found', 'That Webflow connection is not on your account.', '/app/settings'));
+  await wf.revokeToken({ clientId: env.clientId, clientSecret: env.clientSecret, token: store.tokenOf(removed) });
+  await store.saveUser(user);
+  const n = removed._sites.length;
+  redirect(res, '/app/settings?notice=' + encodeURIComponent(`Disconnected ${removed.label || 'Webflow'}: access revoked, token and ${n} site${n === 1 ? '' : 's'} deleted.`));
+}
+
+/* ---------- sign in by email link (returning users) ---------- */
+
+async function handleLoginPage(req, res) {
+  if (await currentUser(req)) return redirect(res, '/app');
+  send(res, 200, html.loginPage(queryOf(req)));
+}
+
+async function handleLoginPost(req, res) {
+  const b = await readBody(req);
+  const addr = String(b.email || '').trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) return redirect(res, '/login?bad=1');
+  if (await store.loginRateOk(addr)) {
+    const user = await store.findUserByEmail(addr);
+    if (user) {
+      const t = await store.createLoginToken(user.id);
+      const link = ENV().appUrl + '/l/' + t;
+      try {
+        await email.send({ to: user.email, subject: 'Your Flowdeck sign in link',
+          html: `<div style="font-family:Segoe UI,Helvetica,Arial,sans-serif;color:#121a24"><p>Click to sign in to Flowdeck. The link works once and expires in 15 minutes.</p><p><a href="${html.esc(link)}" style="display:inline-block;background:#1f6feb;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;font-weight:600">Sign in to Flowdeck</a></p><p style="color:#5b6876;font-size:13px">If you did not ask for this, ignore this email.</p></div>`,
+          text: 'Sign in to Flowdeck (works once, expires in 15 minutes): ' + link });
+      } catch (e) { console.error('[flowdeck] login email failed', e.message); }
+    }
+  }
+  // Same answer whether or not an account exists, so addresses cannot be probed.
+  redirect(res, '/login?sent=1');
+}
+
+async function handleLoginLink(req, res, token, method) {
+  if (method === 'POST') {
+    if (!sameOrigin(req)) return send(res, 403, html.errorPage('Blocked', 'Cross-site request blocked.', '/login'));
+    const rec = await store.consumeLoginToken(token);
+    const user = rec && (await store.getUser(rec.u));
+    if (!user) return send(res, 400, html.errorPage('Link expired', 'This sign in link was already used or is older than 15 minutes. Ask for a new one.', '/login'));
+    res.setHeader('Set-Cookie', [sessionCookie(user.id)]);
+    return redirect(res, '/app');
+  }
+  // GET only shows a button, so link scanners in mail apps cannot use up the link.
+  const rec = await store.peekLoginToken(token);
+  if (!rec) return send(res, 400, html.errorPage('Link expired', 'This sign in link was already used or is older than 15 minutes. Ask for a new one.', '/login'));
+  send(res, 200, html.loginConfirm(token));
 }
 
 async function handleReport(req, res, token) {
@@ -347,6 +430,9 @@ module.exports = async function handler(req, res) {
   try {
     if (path === '/health') return send(res, 200, 'ok', { 'Content-Type': 'text/plain' });
     if (path === '/auth') return await handleAuth(req, res);
+    if (path === '/login' && method === 'POST') return await handleLoginPost(req, res);
+    if (path === '/login') return await handleLoginPage(req, res);
+    if (path.startsWith('/l/')) return await handleLoginLink(req, res, path.slice(3), method);
     if (path === '/callback') return await handleCallback(req, res);
     if (path === '/logout') { res.setHeader('Set-Cookie', [cookie('fd_session', '', 0)]); return redirect(res, '/'); }
     if (path.startsWith('/r/')) return await handleReport(req, res, path.slice(3));
@@ -362,7 +448,7 @@ module.exports = async function handler(req, res) {
 
     if (path === '/app' || path.startsWith('/app/')) {
       const user = await currentUser(req);
-      if (!user) return redirect(res, '/auth');
+      if (!user) return redirect(res, '/login');
       if (method === 'POST' && !sameOrigin(req)) return send(res, 403, html.errorPage('Blocked', 'Cross-site request blocked.'));
       if (path === '/app' && method === 'GET') return await handleApp(req, res, user);
       if (path === '/app/sync' && method === 'POST') return await handleSync(req, res, user);
@@ -376,6 +462,7 @@ module.exports = async function handler(req, res) {
       if (path === '/app/settings' && method === 'GET') return await handleSettingsPage(req, res, user);
       if (path === '/app/settings' && method === 'POST') return await handleSettingsSave(req, res, user);
       if (path === '/app/delete' && method === 'POST') return await handleDelete(req, res, user);
+      if (path === '/app/connection/remove' && method === 'POST') return await handleDisconnect(req, res, user);
     }
     return send(res, 404, html.errorPage('Not found', 'There is nothing at this address.', '/'));
   } catch (e) {

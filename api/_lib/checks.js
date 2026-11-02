@@ -47,6 +47,30 @@ function hostOf(url) {
   try { return new URL(url).hostname; } catch (e) { return ''; }
 }
 
+// The only hosts Flowdeck will request for a site: its Webflow subdomain and its custom domains,
+// as reported by the Webflow API. A user-entered "URL to check" must be on one of them (allowlist).
+function siteHosts(site) {
+  const out = new Set();
+  const add = (h) => { h = String(h || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, ''); if (h) out.add(h); };
+  (site.domains || []).forEach(add);
+  if (site.shortName) add(site.shortName + '.webflow.io');
+  try { if (site.url) add(new URL(site.url).host); } catch (e) { /* no primary url */ }
+  return [...out];
+}
+function allowedCheckUrl(site, url) {
+  let u;
+  try { u = new URL(String(url)); } catch (e) { return false; }
+  const scheme = (process.env.SITE_URL_SCHEME || 'https') + ':';
+  if (u.protocol !== scheme || u.username || u.password) return false;
+  const host = u.port ? u.hostname + ':' + u.port : u.hostname;
+  return siteHosts(site).includes(host.toLowerCase());
+}
+// URL used for uptime checks: the saved one if it is still on the site's domains, else the primary domain.
+function checkUrlOf(site) {
+  const custom = site.settings && site.settings.checkUrl;
+  return custom && allowedCheckUrl(site, custom) ? custom : site.url;
+}
+
 function summarize(checks, sinceMs) {
   const list = sinceMs ? checks.filter((c) => c.t >= sinceMs) : checks;
   const total = list.length;
@@ -55,4 +79,4 @@ function summarize(checks, sinceMs) {
   return { total, okCount, uptime: total ? Math.round((okCount / total) * 1000) / 10 : null, avgMs };
 }
 
-module.exports = { httpCheck, sslCheck, hostOf, summarize };
+module.exports = { httpCheck, sslCheck, hostOf, summarize, siteHosts, allowedCheckUrl, checkUrlOf };

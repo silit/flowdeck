@@ -24,9 +24,8 @@ async function mapLimit(items, limit, fn) {
   return out;
 }
 
-function checkUrlOf(site) {
-  return (site.settings && site.settings.checkUrl) || site.url;
-}
+const checkUrlOf = (site) => checks.checkUrlOf(site);
+const wf = require('./webflow');
 
 async function runChecks(now) {
   now = now || Date.now();
@@ -87,7 +86,20 @@ async function runSync(now, batch) {
       const token = conn && store.tokenOf(conn);
       if (!token) { results.push({ id: site.id, error: 'no token' }); continue; }
       const before = site.data && site.data.forms ? site.data.forms : null;
-      await syncSite(site, token);
+      try {
+        await syncSite(site, token);
+      } catch (e) {
+        if (!wf.isRevoked(e)) throw e;
+        // App uninstalled or access revoked in Webflow: delete the token and its sites, stop calling the API.
+        const removed = await store.removeConnection(user, site.connectionId);
+        if (removed) {
+          const n = removed._sites.length;
+          user.notice = `Webflow access for ${removed.label || 'one connection'} was removed (the app was uninstalled or access was revoked in Webflow). Flowdeck deleted the stored token and its ${n} site${n === 1 ? '' : 's'}. Connect again to bring them back.`;
+          await store.saveUser(user);
+        }
+        results.push({ id: site.id, revoked: true });
+        continue;
+      }
       // Remember the previous 30-day count so the "forms went silent" rule has a baseline.
       if (site.data && site.data.forms) {
         site.data.forms.before30 = before ? Math.max(before.total30 || 0, before.before30 || 0) : 0;
