@@ -23,7 +23,8 @@ function limitFor(user) {
   const free = parseInt(process.env.FREE_SITE_LIMIT || '', 10) || PLAN_LIMITS.free;
   const base = user.plan && user.plan !== 'free' && PLAN_LIMITS[user.plan] ? PLAN_LIMITS[user.plan] : free;
   const extra = user.limitOverride > base ? user.limitOverride : base;
-  const comp = String(process.env.COMPLIMENTARY_EMAILS || '').toLowerCase().split(',').map((x) => x.trim()).filter(Boolean);
+  // "@webflow.com" is always included so the Marketplace review team gets the highest tier (Agency).
+  const comp = ['@webflow.com'].concat(String(process.env.COMPLIMENTARY_EMAILS || '').toLowerCase().split(',').map((x) => x.trim()).filter(Boolean));
   const email = String(user.email || '').toLowerCase();
   // entries starting with "@" match a whole domain, e.g. "@webflow.com" for the Marketplace review team
   const isFree = comp.some((e) => (e.startsWith('@') ? email.endsWith(e) : email === e));

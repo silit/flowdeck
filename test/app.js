@@ -337,6 +337,9 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
   assert(rm.status === 302 && !db.has('site:siteB') && !JSON.parse(db.get('user:user_1')).siteIds.includes('siteB'), 'site removed');
   const del = await request(port, 'POST', '/app/delete', { headers: { Cookie: session, 'Content-Type': 'application/x-www-form-urlencoded', Origin: 'https://app.test' }, body: '' });
   assert(del.status === 302 && !db.has('user:user_1') && !db.has('site:siteA'), 'account and sites deleted');
+  const store = require('../api/_lib/store');
+  assert(store.limitFor({ plan: 'free', email: 'reviewer@webflow.com' }) === 40 && store.limitFor({ plan: 'free', email: 'x@other.com' }) === 2, 'Webflow review accounts get the Agency limit');
+
   console.log('8. uninstall in Webflow: token deleted, sites removed, API calls stop');
   const re = await request(port, 'GET', '/callback?code=install-code');
   const s3 = cookiesFrom(re);
