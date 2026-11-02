@@ -69,8 +69,10 @@ async function revokeToken({ clientId, clientSecret, token }) {
       body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, access_token: token })
     });
     const data = await res.json().catch(() => ({}));
-    return !!(res.ok && data && data.didRevoke !== false);
-  } catch (e) { return false; }
+    const ok = !!(res.ok && data && data.didRevoke !== false);
+    console.log('[flowdeck] revoke authorization', res.status, ok ? 'revoked' : 'not revoked', ok ? '' : String((data && (data.message || data.msg || data.error)) || '').slice(0, 120));
+    return ok;
+  } catch (e) { console.log('[flowdeck] revoke authorization failed', e.message); return false; }
 }
 
 // True when Webflow says the token no longer works (authorization revoked or app uninstalled).
