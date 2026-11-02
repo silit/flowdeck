@@ -62,7 +62,11 @@ const webflow = http.createServer(async (req, res) => {
   const body = await readJSON(req);
   const u = new URL(req.url, 'http://x');
   if (u.pathname === '/oauth/access_token') {
-    if (body.code !== 'good-code' || body.client_id !== 'cid' || body.client_secret !== 'sec') return json(res, 400, { error: 'invalid_grant' });
+    if (!['good-code', 'install-code'].includes(body.code) || body.client_id !== 'cid' || body.client_secret !== 'sec') return json(res, 400, { error: 'invalid_grant' });
+    // like Webflow: redirect_uri must be sent exactly when the authorization link had one
+    // (good-code comes from our /auth link with redirect_uri, install-code from the Marketplace link without it)
+    if (body.code === 'good-code' && body.redirect_uri !== 'https://app.test/callback') return json(res, 400, { error: 'invalid_grant', error_description: 'redirect_uri mismatch' });
+    if (body.code === 'install-code' && body.redirect_uri) return json(res, 400, { error: 'invalid_grant', error_description: 'redirect_uri mismatch' });
     return json(res, 200, { access_token: 'tok_abc', token_type: 'bearer' });
   }
   if ((req.headers.authorization || '') !== 'Bearer tok_abc') return json(res, 401, { message: 'Unauthorized' });
@@ -281,6 +285,14 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
   const monitoredNow = ['siteA', 'siteB', 'siteC'].filter((id) => JSON.parse(db.get('site:' + id)).monitored);
   assert(u1.plan === 'free' && monitoredNow.length === 2 && !monitoredNow.includes('siteC'), 'expired subscription drops to free and pauses the newest site');
   ls.close();
+
+  console.log('6b. install from the Marketplace link (no state, no redirect_uri) signs in');
+  const inst = await request(port, 'GET', '/callback?code=install-code');
+  assert(inst.status === 302 && inst.headers.location.startsWith('/app') && /fd_session=/.test(cookiesFrom(inst)), 'Marketplace install callback reaches the dashboard');
+  const instDash = await request(port, 'GET', '/app', { headers: { Cookie: cookiesFrom(inst) } });
+  assert(instDash.status === 200 && instDash.body.includes('Acme Dental'), 'dashboard opens after a Marketplace install');
+  const bad = await request(port, 'GET', '/callback?code=wrong-code');
+  assert(bad.status === 400 && bad.body.includes('Could not sign in'), 'a bad code shows a sign in error page, not a crash');
 
   console.log('7. settings, remove site, delete account');
   const st = await request(port, 'POST', '/app/settings', { headers: { Cookie: session, 'Content-Type': 'application/x-www-form-urlencoded', Origin: 'https://app.test' }, body: form({ alertEmail: 'alerts@agency.com', brand: 'Studio X', alerts: '1', digest: '1' }) });

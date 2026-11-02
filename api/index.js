@@ -109,12 +109,21 @@ async function handleCallback(req, res) {
   if (!q.code) return send(res, 400, html.errorPage('Missing code', 'Webflow did not return an authorization code.', '/'));
   if (q.state && c.fd_state && q.state !== c.fd_state) return send(res, 400, html.errorPage('State mismatch', 'The sign in request did not match. Start again.', '/'));
 
+  const started = Date.now();
+  // A state value means the sign in started at our /auth link (which sends redirect_uri);
+  // no state means it started at the Marketplace install link.
   let token;
-  try { token = await wf.exchangeCode({ clientId: env.clientId, clientSecret: env.clientSecret, code: q.code, redirectUri: env.appUrl + '/callback' }); }
-  catch (e) { return send(res, 400, html.errorPage('Could not sign in', e.message, '/')); }
+  try { token = await wf.exchangeCode({ clientId: env.clientId, clientSecret: env.clientSecret, code: q.code, redirectUri: env.appUrl + '/callback', withRedirect: !!q.state }); }
+  catch (e) {
+    console.error('[flowdeck] token exchange failed', q.state ? 'auth-link' : 'install-link', e.status || '', e.message);
+    return send(res, 400, html.errorPage('Could not sign in', e.message + ' Please start again from the button below.', '/auth'));
+  }
 
   let info;
-  try { info = await wf.authorizedBy(token); } catch (e) { return send(res, 400, html.errorPage('Could not read your Webflow user', e.message, '/')); }
+  try { info = await wf.authorizedBy(token); } catch (e) {
+    console.error('[flowdeck] authorized_by failed', e.status || '', e.message);
+    return send(res, 400, html.errorPage('Could not read your Webflow user', e.message, '/'));
+  }
   if (!info || !info.id) return send(res, 400, html.errorPage('Could not read your Webflow user', 'Webflow returned no user id.', '/'));
 
   let user = await store.getUser(info.id);
@@ -123,7 +132,7 @@ async function handleCallback(req, res) {
   const conn = store.addConnection(user, token, info.email || '');
 
   let sitesMeta = [];
-  try { sitesMeta = await wf.listSites(token); } catch (e) { sitesMeta = []; }
+  try { sitesMeta = await wf.listSites(token); } catch (e) { console.error('[flowdeck] list sites failed', e.status || '', e.message); sitesMeta = []; }
   const limit = limitFor(user);
   const notices = [];
   let added = 0;
@@ -139,14 +148,18 @@ async function handleCallback(req, res) {
   await store.saveUser(user);
   await store.enforceLimit(user, limit);
 
-  // First data for up to 5 sites right away, so the dashboard is not empty
-  const fresh = (await store.getSites(user.siteIds)).filter((s) => s.monitored && !s.syncedAt).slice(0, 5);
+  // First data for a few sites right away, so the dashboard is not empty. Kept inside a short
+  // time budget so a workspace with many or large sites never makes the sign in time out;
+  // the sync job fills in the rest within minutes.
+  const BUDGET_MS = 12000;
+  const fresh = (await store.getSites(user.siteIds)).filter((s) => s.monitored && !s.syncedAt).slice(0, 3);
   for (const site of fresh) {
+    if (Date.now() - started > BUDGET_MS) break;
     try {
-      await syncSite(site, token, { pages: 200, collections: 15, submissions: 200 });
+      await syncSite(site, token, { pages: 100, collections: 10, submissions: 100 });
       const url = (site.settings && site.settings.checkUrl) || site.url;
-      if (url) {
-        const chk = await checks.httpCheck(url, 8000);
+      if (url && Date.now() - started < BUDGET_MS) {
+        const chk = await checks.httpCheck(url, 5000);
         site.status = Object.assign(site.status || {}, { lastCheckAt: chk.t, code: chk.code, ms: chk.ms, up: chk.ok ? true : null, fails: chk.ok ? 0 : 1, since: chk.t, error: chk.error || '' });
         await store.pushCheck(site.id, { t: chk.t, ok: chk.ok, code: chk.code, ms: chk.ms });
       }
@@ -333,10 +346,10 @@ module.exports = async function handler(req, res) {
   const method = (req.method || 'GET').toUpperCase();
   try {
     if (path === '/health') return send(res, 200, 'ok', { 'Content-Type': 'text/plain' });
-    if (path === '/auth') return handleAuth(req, res);
-    if (path === '/callback') return handleCallback(req, res);
+    if (path === '/auth') return await handleAuth(req, res);
+    if (path === '/callback') return await handleCallback(req, res);
     if (path === '/logout') { res.setHeader('Set-Cookie', [cookie('fd_session', '', 0)]); return redirect(res, '/'); }
-    if (path.startsWith('/r/')) return handleReport(req, res, path.slice(3));
+    if (path.startsWith('/r/')) return await handleReport(req, res, path.slice(3));
 
     if (path.startsWith('/cron/')) {
       if (!cronAuthorized(req)) return json(res, 401, { error: 'unauthorized' });
@@ -351,18 +364,18 @@ module.exports = async function handler(req, res) {
       const user = await currentUser(req);
       if (!user) return redirect(res, '/auth');
       if (method === 'POST' && !sameOrigin(req)) return send(res, 403, html.errorPage('Blocked', 'Cross-site request blocked.'));
-      if (path === '/app' && method === 'GET') return handleApp(req, res, user);
-      if (path === '/app/sync' && method === 'POST') return handleSync(req, res, user);
-      if (path === '/app/site' && method === 'GET') return handleSitePage(req, res, user);
-      if (path === '/app/site/settings' && method === 'POST') return handleSiteSettings(req, res, user);
-      if (path === '/app/site/report' && method === 'POST') return handleSiteReport(req, res, user);
-      if (path === '/app/site/remove' && method === 'POST') return handleSiteRemove(req, res, user);
-      if (path === '/app/site/monitor' && method === 'POST') return handleSiteMonitor(req, res, user);
-      if (path === '/app/billing/checkout' && method === 'POST') return handleCheckout(req, res, user);
-      if (path === '/app/billing/portal' && method === 'GET') return handlePortal(req, res, user);
-      if (path === '/app/settings' && method === 'GET') return handleSettingsPage(req, res, user);
-      if (path === '/app/settings' && method === 'POST') return handleSettingsSave(req, res, user);
-      if (path === '/app/delete' && method === 'POST') return handleDelete(req, res, user);
+      if (path === '/app' && method === 'GET') return await handleApp(req, res, user);
+      if (path === '/app/sync' && method === 'POST') return await handleSync(req, res, user);
+      if (path === '/app/site' && method === 'GET') return await handleSitePage(req, res, user);
+      if (path === '/app/site/settings' && method === 'POST') return await handleSiteSettings(req, res, user);
+      if (path === '/app/site/report' && method === 'POST') return await handleSiteReport(req, res, user);
+      if (path === '/app/site/remove' && method === 'POST') return await handleSiteRemove(req, res, user);
+      if (path === '/app/site/monitor' && method === 'POST') return await handleSiteMonitor(req, res, user);
+      if (path === '/app/billing/checkout' && method === 'POST') return await handleCheckout(req, res, user);
+      if (path === '/app/billing/portal' && method === 'GET') return await handlePortal(req, res, user);
+      if (path === '/app/settings' && method === 'GET') return await handleSettingsPage(req, res, user);
+      if (path === '/app/settings' && method === 'POST') return await handleSettingsSave(req, res, user);
+      if (path === '/app/delete' && method === 'POST') return await handleDelete(req, res, user);
     }
     return send(res, 404, html.errorPage('Not found', 'There is nothing at this address.', '/'));
   } catch (e) {

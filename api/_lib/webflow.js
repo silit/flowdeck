@@ -38,17 +38,40 @@ function authorizeUrl({ clientId, redirectUri, state }) {
   }).toString();
 }
 
-async function exchangeCode({ clientId, clientSecret, code, redirectUri }) {
+async function tokenRequest({ clientId, clientSecret, code, redirectUri }) {
+  const body = { client_id: clientId, client_secret: clientSecret, code, grant_type: 'authorization_code' };
+  if (redirectUri) body.redirect_uri = redirectUri;
   const res = await fetch(API_BASE() + '/oauth/access_token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code, redirect_uri: redirectUri, grant_type: 'authorization_code' })
+    body: JSON.stringify(body)
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.access_token) {
-    throw new Error((data && (data.error_description || data.message || data.error)) || 'Token exchange failed');
+    const err = new Error((data && (data.error_description || data.message || data.error)) || ('Token exchange failed (' + res.status + ')'));
+    err.status = res.status;
+    throw err;
   }
   return data.access_token;
+}
+
+// Webflow wants redirect_uri in the token request only when the authorization link had one.
+// Our own /auth link sends it; the Marketplace install link may not. withRedirect says which
+// flow started this sign in; if Webflow rejects that form, the other form is tried once.
+async function exchangeCode({ clientId, clientSecret, code, redirectUri, withRedirect }) {
+  const first = withRedirect === false ? null : redirectUri;
+  const second = first ? null : redirectUri;
+  try {
+    return await tokenRequest({ clientId, clientSecret, code, redirectUri: first });
+  } catch (e1) {
+    if (!second && !first) throw e1;
+    try {
+      return await tokenRequest({ clientId, clientSecret, code, redirectUri: second });
+    } catch (e2) {
+      e1.message = e1.message + ' / ' + e2.message;
+      throw e1;
+    }
+  }
 }
 
 const authorizedBy = (token) => call(token, 'GET', '/token/authorized_by');
