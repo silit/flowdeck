@@ -175,6 +175,11 @@ async function handleCallback(req, res) {
         const chk = await checks.httpCheck(url, 5000);
         site.status = Object.assign(site.status || {}, { lastCheckAt: chk.t, code: chk.code, ms: chk.ms, up: chk.ok ? true : null, fails: chk.ok ? 0 : 1, since: chk.t, error: chk.error || '' });
         await store.pushCheck(site.id, { t: chk.t, ok: chk.ok, code: chk.code, ms: chk.ms });
+        const host = url.startsWith('https://') ? checks.hostOf(url) : '';
+        if (host && Date.now() - started < BUDGET_MS) {
+          const ssl = await checks.sslCheck(host, 4000);
+          Object.assign(site.status, { sslCheckedAt: Date.now(), sslExpiresAt: ssl.expiresAt, sslError: ssl.error || '' });
+        }
       }
       await store.saveSite(site);
     } catch (e) { /* the sync job will retry */ }
