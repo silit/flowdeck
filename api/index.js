@@ -106,7 +106,10 @@ async function handleCallback(req, res) {
   const env = ENV();
   const q = queryOf(req);
   const c = parseCookies(req);
-  if (q.error) return send(res, 400, html.errorPage('Authorization cancelled', String(q.error_description || q.error), '/'));
+  if (q.error) {
+    const why = q.error === 'access_denied' ? 'You cancelled on the Webflow screen, so Flowdeck has no access to your sites and nothing was stored.' : String(q.error_description || q.error);
+    return send(res, 400, html.errorPage('Authorization cancelled', why + ' You can connect any time from the home page.', '/'));
+  }
   if (!q.code) return send(res, 400, html.errorPage('Missing code', 'Webflow did not return an authorization code.', '/'));
   // Our /auth link always carries a state that must match the cookie set there. The Marketplace
   // install link (Webflow's recommended form) carries no state and no redirect_uri.
@@ -190,9 +193,10 @@ async function handleApp(req, res, user) {
   const checksBySite = {};
   for (const s of sites) checksBySite[s.id] = await store.recentChecks(s.id);
   let notice = q.notice ? html.esc(q.notice) : '';
-  if (user.notice) { notice = html.esc(user.notice); delete user.notice; await store.saveUser(user); }
   if (q.added) notice = `${html.esc(q.added)} site${q.added === '1' ? '' : 's'} connected. First data is loading; uptime starts within 5 minutes.`;
-  if (q.synced) notice = 'Data refreshed.';
+  if (q.synced) notice = 'Data refreshed from Webflow.';
+  // A one-time message from the server (for example: access was revoked in Webflow) wins.
+  if (user.notice) { notice = html.esc(user.notice); delete user.notice; await store.saveUser(user); }
   send(res, 200, html.dashboard(user, sites, checksBySite, Date.now(), notice));
 }
 
