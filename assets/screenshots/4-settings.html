@@ -1,0 +1,51 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Settings · Flowdeck</title>
+<link rel="icon" href="/favicon.png"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700&family=Figtree:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap">
+<style>
+:root{--bg:#f4f6f8;--surface:#fff;--fg:#121a24;--muted:#5b6876;--line:#dbe1e8;--accent:#1f6feb;--accent-ink:#fff;--ok:#1a9a5a;--ok-bg:#dff5e8;--bad:#c9372c;--bad-bg:#fde3df;--warn:#b26a00;--warn-bg:#fff0d6;--code:#eef2f6}
+@media(prefers-color-scheme:dark){:root{--bg:#0f141a;--surface:#161d26;--fg:#e8edf2;--muted:#94a1af;--line:#2a3441;--accent:#5b9dff;--accent-ink:#0b1220;--ok:#49d08a;--ok-bg:#133526;--bad:#ff7b6e;--bad-bg:#40201c;--warn:#ffb55c;--warn-bg:#3c2d12;--code:#1f2832;color-scheme:dark}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 Figtree,"Segoe UI",Helvetica,Arial,sans-serif;padding:0 max(16px,env(safe-area-inset-left)) 48px max(16px,env(safe-area-inset-right))}
+.wrap{max-width:1180px;margin:0 auto}a{color:var(--accent)}h1,h2,h3{font-family:"Bricolage Grotesque",Arial,sans-serif;margin:0;line-height:1.15}h1{font-size:clamp(24px,3vw,32px)}h2{font-size:20px}h3{font-size:16px}p{margin:0}
+.top{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:16px 0;border-bottom:1px solid var(--line);margin-bottom:24px}.brand{font-family:"Bricolage Grotesque",Arial,sans-serif;font-weight:700;font-size:21px;text-decoration:none;color:var(--fg)}.brand span{color:var(--accent)}
+.top nav{display:flex;gap:16px;font-size:14px;font-weight:500}.top nav a{color:var(--fg);text-decoration:none}.top nav a:hover{color:var(--accent)}
+.head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:12px;margin-bottom:18px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px}.stat{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px}.stat .n{font-family:"Bricolage Grotesque",Arial,sans-serif;font-size:28px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums}.stat .l{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-top:6px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px;min-width:0}.panel+.panel{margin-top:16px}.grid>.panel{margin-top:0}
+.tablewrap{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:12px}table{border-collapse:collapse;width:100%;min-width:900px;font-size:14px}th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:middle;white-space:nowrap}th{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:600}tr:last-child td{border-bottom:0}td.num{font-variant-numeric:tabular-nums}tbody tr:hover{background:var(--code)}
+.pill{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;border-radius:999px;padding:3px 9px}.pill.ok{background:var(--ok-bg);color:var(--ok)}.pill.bad{background:var(--bad-bg);color:var(--bad)}.pill.warn{background:var(--warn-bg);color:var(--warn)}.pill.off{background:var(--code);color:var(--muted)}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;vertical-align:middle}.dot.ok{background:var(--ok)}.dot.bad{background:var(--bad)}.dot.off{background:var(--muted)}
+.muted{color:var(--muted)}.small{font-size:13px}.mono{font-family:"JetBrains Mono",Menlo,Consolas,monospace;font-size:12.5px}
+.btn{font:inherit;font-weight:600;font-size:14px;border-radius:8px;padding:9px 14px;cursor:pointer;border:1px solid var(--line);background:var(--surface);color:var(--fg);text-decoration:none;display:inline-flex;gap:8px;align-items:center}.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}.btn.danger{color:var(--bad)}.btn.sm{padding:6px 10px;font-size:13px}
+.actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;align-items:start}
+.fields{display:grid;gap:12px}.field{display:grid;gap:5px}label{font-size:13px;font-weight:600}.hint{font-size:12.5px;color:var(--muted)}
+input[type=text],input[type=email],input[type=url],select{width:100%;font:inherit;font-size:14px;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 11px}
+.check{display:flex;gap:10px;align-items:flex-start;font-size:14px;font-weight:400}.check input{margin-top:3px;accent-color:var(--accent)}
+.notice{border-left:4px solid var(--accent);padding:12px 14px;background:var(--surface);border-radius:8px;margin-bottom:16px}.notice.bad{border-left-color:var(--bad)}.notice.warn{border-left-color:var(--warn)}
+ul.issues{margin:6px 0 0;padding-left:18px;display:grid;gap:4px;font-size:14px}ul.issues li span{color:var(--muted)}ul.plans{list-style:none;padding:0;gap:8px}ul.plans li{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--line)}ul.plans li span{color:inherit}
+.bars{display:flex;gap:2px;align-items:flex-end;height:44px;margin-top:8px;width:100%;overflow:hidden}.bars i{flex:1 1 0;min-width:0;background:var(--ok);border-radius:2px}.bars i.bad{background:var(--bad)}.bars i.off{background:var(--line)}
+.empty{padding:40px;text-align:center;color:var(--muted)}
+footer{margin-top:40px;padding-top:16px;border-top:1px solid var(--line);font-size:13px;color:var(--muted);display:flex;flex-wrap:wrap;gap:8px 20px}
+@media(max-width:700px){.top nav{gap:10px;font-size:13px}}
+</style></head><body><div class="wrap">
+<header class="top"><a class="brand" href="/app">Flow<span>deck</span></a><nav><a href="/app">Sites</a><a href="/app/settings">Settings</a><a href="/logout">Sign out</a></nav></header>
+
+
+<div class="head"><div><h1>Settings</h1><p class="muted">hello@northstudio.co</p></div></div>
+<div class="grid">
+<div class="panel"><h3>Alerts and reports</h3>
+<form method="post" action="/app/settings" class="fields" style="margin-top:10px">
+<div class="field"><label for="alertEmail">Send alerts and the weekly report to</label><input type="email" id="alertEmail" name="alertEmail" value="alerts@northstudio.co"></div>
+<div class="field"><label for="brand">Agency name (shown on client reports)</label><input type="text" id="brand" name="brand" value="North Studio" placeholder="Your studio"></div>
+<label class="check"><input type="checkbox" name="alerts" value="1" checked> Email me when a site goes down, SSL is about to expire, changes sit unpublished for 7 days, or a form goes silent</label>
+<label class="check"><input type="checkbox" name="digest" value="1" checked> Weekly summary every Monday</label>
+<div class="actions"><button class="btn primary" type="submit">Save</button></div>
+</form></div>
+<div class="panel" id="plan"><h3>Plan</h3><p style="margin-top:6px">You are on <strong>Studio</strong>: 6 of 15 sites monitored, 6 connected.</p><p class="muted small" style="margin-top:6px">Renews 2026-11-21</p><ul class="issues plans" style="margin-top:8px"><li><span><strong>Free</strong> · 1 site</span><span></span></li><li><span><strong>Solo</strong> · 5 sites</span><span><span class="muted small">$9/mo</span></span></li><li><span><strong>Studio</strong> · 15 sites</span><span><span class="pill ok">Current</span></span></li><li><span><strong>Agency</strong> · 40 sites</span><span><span class="muted small">$49/mo</span></span></li></ul><div class="actions" style="margin-top:10px"><a class="btn sm" href="/app/billing/portal">Manage billing, invoices or cancel</a></div><p class="muted small" style="margin-top:10px">To change plans, use Manage billing. Need more than 40 sites? Write to info@silitlabs.com.</p></div>
+<div class="panel"><h3>Webflow connections</h3><p class="muted small" style="margin:6px 0 10px">Each connection is one Webflow authorization. Disconnect revokes Flowdeck's access in Webflow and deletes the stored token and that connection's sites from Flowdeck. Uninstalling the app in Webflow has the same effect within 15 minutes.</p>
+<ul class="issues plans"><li><span>hello@northstudio.co <span class="muted">authorized 2026-09-24, 6 sites</span></span><form method="post" action="/app/connection/remove"><input type="hidden" name="id" value="c1"><button class="btn sm" type="submit">Disconnect</button></form></li></ul>
+<div class="actions" style="margin-top:10px"><a class="btn" href="/auth">Connect more sites</a></div></div>
+<div class="panel"><h3>Delete account</h3><p class="muted small" style="margin:6px 0 10px">Revokes every Webflow authorization and removes your sites, checks and tokens from Flowdeck. Your Webflow sites are not affected.</p>
+<form method="post" action="/app/delete"><button class="btn sm danger" type="submit">Delete my Flowdeck account</button></form></div>
+</div>
+<footer><span>Flowdeck</span><a href="/privacy">Privacy</a><a href="/terms">Terms</a><span>Not affiliated with Webflow.</span></footer>
+</div></body></html>

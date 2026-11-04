@@ -1,0 +1,105 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Flowdeck</title>
+<link rel="icon" href="/favicon.png"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700&family=Figtree:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap">
+<style>
+:root{--bg:#f4f6f8;--surface:#fff;--fg:#121a24;--muted:#5b6876;--line:#dbe1e8;--accent:#1f6feb;--accent-ink:#fff;--ok:#1a9a5a;--ok-bg:#dff5e8;--bad:#c9372c;--bad-bg:#fde3df;--warn:#b26a00;--warn-bg:#fff0d6;--code:#eef2f6}
+@media(prefers-color-scheme:dark){:root{--bg:#0f141a;--surface:#161d26;--fg:#e8edf2;--muted:#94a1af;--line:#2a3441;--accent:#5b9dff;--accent-ink:#0b1220;--ok:#49d08a;--ok-bg:#133526;--bad:#ff7b6e;--bad-bg:#40201c;--warn:#ffb55c;--warn-bg:#3c2d12;--code:#1f2832;color-scheme:dark}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 Figtree,"Segoe UI",Helvetica,Arial,sans-serif;padding:0 max(16px,env(safe-area-inset-left)) 48px max(16px,env(safe-area-inset-right))}
+.wrap{max-width:1180px;margin:0 auto}a{color:var(--accent)}h1,h2,h3{font-family:"Bricolage Grotesque",Arial,sans-serif;margin:0;line-height:1.15}h1{font-size:clamp(24px,3vw,32px)}h2{font-size:20px}h3{font-size:16px}p{margin:0}
+.top{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:16px 0;border-bottom:1px solid var(--line);margin-bottom:24px}.brand{font-family:"Bricolage Grotesque",Arial,sans-serif;font-weight:700;font-size:21px;text-decoration:none;color:var(--fg)}.brand span{color:var(--accent)}
+.top nav{display:flex;gap:16px;font-size:14px;font-weight:500}.top nav a{color:var(--fg);text-decoration:none}.top nav a:hover{color:var(--accent)}
+.head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:12px;margin-bottom:18px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px}.stat{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px}.stat .n{font-family:"Bricolage Grotesque",Arial,sans-serif;font-size:28px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums}.stat .l{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-top:6px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px;min-width:0}.panel+.panel{margin-top:16px}.grid>.panel{margin-top:0}
+.tablewrap{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:12px}table{border-collapse:collapse;width:100%;min-width:900px;font-size:14px}th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:middle;white-space:nowrap}th{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:600}tr:last-child td{border-bottom:0}td.num{font-variant-numeric:tabular-nums}tbody tr:hover{background:var(--code)}
+.pill{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;border-radius:999px;padding:3px 9px}.pill.ok{background:var(--ok-bg);color:var(--ok)}.pill.bad{background:var(--bad-bg);color:var(--bad)}.pill.warn{background:var(--warn-bg);color:var(--warn)}.pill.off{background:var(--code);color:var(--muted)}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;vertical-align:middle}.dot.ok{background:var(--ok)}.dot.bad{background:var(--bad)}.dot.off{background:var(--muted)}
+.muted{color:var(--muted)}.small{font-size:13px}.mono{font-family:"JetBrains Mono",Menlo,Consolas,monospace;font-size:12.5px}
+.btn{font:inherit;font-weight:600;font-size:14px;border-radius:8px;padding:9px 14px;cursor:pointer;border:1px solid var(--line);background:var(--surface);color:var(--fg);text-decoration:none;display:inline-flex;gap:8px;align-items:center}.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}.btn.danger{color:var(--bad)}.btn.sm{padding:6px 10px;font-size:13px}
+.actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;align-items:start}
+.fields{display:grid;gap:12px}.field{display:grid;gap:5px}label{font-size:13px;font-weight:600}.hint{font-size:12.5px;color:var(--muted)}
+input[type=text],input[type=email],input[type=url],select{width:100%;font:inherit;font-size:14px;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 11px}
+.check{display:flex;gap:10px;align-items:flex-start;font-size:14px;font-weight:400}.check input{margin-top:3px;accent-color:var(--accent)}
+.notice{border-left:4px solid var(--accent);padding:12px 14px;background:var(--surface);border-radius:8px;margin-bottom:16px}.notice.bad{border-left-color:var(--bad)}.notice.warn{border-left-color:var(--warn)}
+ul.issues{margin:6px 0 0;padding-left:18px;display:grid;gap:4px;font-size:14px}ul.issues li span{color:var(--muted)}ul.plans{list-style:none;padding:0;gap:8px}ul.plans li{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--line)}ul.plans li span{color:inherit}
+.bars{display:flex;gap:2px;align-items:flex-end;height:44px;margin-top:8px;width:100%;overflow:hidden}.bars i{flex:1 1 0;min-width:0;background:var(--ok);border-radius:2px}.bars i.bad{background:var(--bad)}.bars i.off{background:var(--line)}
+.empty{padding:40px;text-align:center;color:var(--muted)}
+footer{margin-top:40px;padding-top:16px;border-top:1px solid var(--line);font-size:13px;color:var(--muted);display:flex;flex-wrap:wrap;gap:8px 20px}
+@media(max-width:700px){.top nav{gap:10px;font-size:13px}}
+</style></head><body><div class="wrap">
+<header class="top"><a class="brand" href="/app">Flow<span>deck</span></a><nav><a href="/app">Sites</a><a href="/app/settings">Settings</a><a href="/logout">Sign out</a></nav></header>
+
+
+<div class="head"><div><h1>Your sites</h1><p class="muted">6 monitored · Studio plan, up to 15 sites · checks every 5 minutes · Webflow data fetched 1h ago</p></div>
+<div class="actions"><form method="post" action="/app/sync"><button class="btn" type="submit">Refresh data</button></form><a class="btn primary" href="/auth">Connect sites</a></div></div>
+<div class="stats">
+<div class="stat"><div class="n">6</div><div class="l">Sites</div></div>
+<div class="stat"><div class="n" style="color:var(--bad)">1</div><div class="l">Down now</div></div>
+<div class="stat"><div class="n" style="color:var(--warn)">2</div><div class="l">Unpublished 7d+</div></div>
+<div class="stat"><div class="n">25</div><div class="l">Form submissions 7d</div></div>
+<div class="stat"><div class="n" style="color:var(--warn)">7</div><div class="l">SEO issues</div></div>
+</div>
+<div class="tablewrap"><table><thead><tr><th>Site</th><th>Status</th><th>Uptime 7d</th><th>Response</th><th>SSL</th><th>Publish</th><th>Forms 7d / 30d</th><th>CMS items</th><th>SEO</th></tr></thead><tbody><tr>
+<td><a href="/app/site?id=s1" style="color:inherit;text-decoration:none;font-weight:600">Harbour Dental Clinic</a><br><span class="muted small">harbourdental.co.uk</span></td>
+<td><span class="pill ok">Up</span></td>
+<td class="num">100%</td>
+<td class="num">240 ms</td>
+<td class="num"><span class="muted">71d</span></td>
+<td><span class="muted">Published 2026-11-02</span></td>
+<td class="num">14 <span class="muted">/ 61</span></td>
+<td class="num"><span class="pill warn">1940 / 2000 (97%)</span></td>
+<td class="num"><span class="pill warn">4</span></td>
+</tr><tr>
+<td><a href="/app/site?id=s2" style="color:inherit;text-decoration:none;font-weight:600">Nordic Yacht Charter</a><br><span class="muted small">nordicyacht.com</span></td>
+<td><span class="pill bad">Down</span></td>
+<td class="num">98.1%</td>
+<td class="num">0 ms</td>
+<td class="num"><span class="pill warn">12d</span></td>
+<td><span class="pill warn">Unpublished 9d</span></td>
+<td class="num">0 <span class="muted">/ 23</span></td>
+<td class="num"><span class="">312 / 10000</span></td>
+<td class="num"><span class="pill ok">0</span></td>
+</tr><tr>
+<td><a href="/app/site?id=s3" style="color:inherit;text-decoration:none;font-weight:600">Lumen Architects</a><br><span class="muted small">lumen.studio</span></td>
+<td><span class="pill ok">Up</span></td>
+<td class="num">100%</td>
+<td class="num">240 ms</td>
+<td class="num"><span class="muted">58d</span></td>
+<td><span class="muted">Published 2026-11-03</span></td>
+<td class="num">3 <span class="muted">/ 9</span></td>
+<td class="num"><span class="">88 / 2000</span></td>
+<td class="num"><span class="pill ok">0</span></td>
+</tr><tr>
+<td><a href="/app/site?id=s4" style="color:inherit;text-decoration:none;font-weight:600">Fjord Coffee Roasters</a><br><span class="muted small">fjordcoffee.no</span></td>
+<td><span class="pill ok">Up</span></td>
+<td class="num">99.7%</td>
+<td class="num">310 ms</td>
+<td class="num"><span class="muted">33d</span></td>
+<td><span class="muted">Published 2026-10-31</span></td>
+<td class="num">2 <span class="muted">/ 11</span></td>
+<td class="num"><span class="">1540 / 2000</span></td>
+<td class="num"><span class="pill warn">2</span></td>
+</tr><tr>
+<td><a href="/app/site?id=s5" style="color:inherit;text-decoration:none;font-weight:600">Pelican Legal</a><br><span class="muted small">pelicanlegal.ie</span></td>
+<td><span class="pill ok">Up</span></td>
+<td class="num">100%</td>
+<td class="num">190 ms</td>
+<td class="num"><span class="muted">80d</span></td>
+<td><span class="pill warn">Unpublished 12d</span></td>
+<td class="num">6 <span class="muted">/ 28</span></td>
+<td class="num">140</td>
+<td class="num"><span class="pill warn">1</span></td>
+</tr><tr>
+<td><a href="/app/site?id=s6" style="color:inherit;text-decoration:none;font-weight:600">Atlas Fitness</a><br><span class="muted small">atlasfitness.app</span></td>
+<td><span class="pill ok">Up</span></td>
+<td class="num">100%</td>
+<td class="num">150 ms</td>
+<td class="num"><span class="muted">45d</span></td>
+<td><span class="muted">Published 2026-11-02</span></td>
+<td class="num">0 <span class="muted">/ 0</span></td>
+<td class="num">20</td>
+<td class="num"><span class="pill ok">0</span></td>
+</tr></tbody></table></div>
+<p class="muted small" style="margin-top:12px">Form counts and SEO checks refresh a few times a day; uptime and SSL every 5 minutes. Click a site for details and the client report link.</p>
+<footer><span>Flowdeck</span><a href="/privacy">Privacy</a><a href="/terms">Terms</a><span>Not affiliated with Webflow.</span></footer>
+</div></body></html>
