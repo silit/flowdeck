@@ -17,6 +17,7 @@ function exec(cmd) {
   const [c, ...a] = cmd;
   switch (c.toUpperCase()) {
     case 'GET': return alive(a[0]) ? db.get(a[0]) : null;
+    case 'GETDEL': { const v = alive(a[0]) ? db.get(a[0]) : null; db.delete(a[0]); ttl.delete(a[0]); return v; }
     case 'MGET': return a.map((k) => (alive(k) ? db.get(k) : null));
     case 'SET': {
       const nx = a.includes('NX'); const exI = a.indexOf('EX');
@@ -51,7 +52,8 @@ const siteB = http.createServer((req, res) => { res.writeHead(siteBStatus, { 'Co
 
 /* ---- mock Resend ---- */
 const emails = [];
-const resend = http.createServer(async (req, res) => { const body = await readJSON(req); emails.push(body); json(res, 200, { id: 'em_' + emails.length }); });
+let resendFail = false;
+const resend = http.createServer(async (req, res) => { const body = await readJSON(req); if (resendFail) return json(res, 500, { message: 'resend down' }); emails.push(body); json(res, 200, { id: 'em_' + emails.length }); });
 
 /* ---- mock Webflow ---- */
 const DAY = 86400000;
@@ -117,7 +119,7 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
 
   Object.assign(process.env, {
     WEBFLOW_CLIENT_ID: 'cid', WEBFLOW_CLIENT_SECRET: 'sec', SESSION_SECRET: 'test-session-secret-which-is-long',
-    APP_URL: 'https://app.test', CRON_SECRET: 'cronkey', FREE_SITE_LIMIT: '2', SITE_URL_SCHEME: 'http',
+    APP_URL: 'https://app.test', CRON_SECRET: 'cronkey', FREE_SITE_LIMIT: '2', SITE_URL_SCHEME: 'http', ALLOW_PRIVATE_CHECKS: '1', REVOKE_CONFIRM_MS: '0',
     KV_REST_API_URL: 'http://127.0.0.1:' + redisPort, KV_REST_API_TOKEN: 't',
     WEBFLOW_API_BASE: 'http://127.0.0.1:' + wfPort, WEBFLOW_AUTH_BASE: 'http://127.0.0.1:' + wfPort,
     RESEND_API_KEY: 'rk', RESEND_API_BASE: 'http://127.0.0.1:' + resendPort, EMAIL_FROM: 'Flowdeck <t@test>'
@@ -228,8 +230,10 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
   r = await request(port, 'GET', '/cron/digest?key=cronkey&force=1');
   out = JSON.parse(r.body);
   assert(out.sent === 1 && emails[emails.length - 1].subject.includes('Weekly report') && emails[emails.length - 1].html.includes('Acme Dental Clinic'), 'weekly digest sent with the site table');
+  const weekly = () => emails.filter((e) => e.subject.includes('Weekly report')).length;
+  const weeklyBefore = weekly();
   r = await request(port, 'GET', '/cron/digest?key=cronkey&force=1');
-  assert(JSON.parse(r.body).skipped === 'already sent today', 'digest not sent twice on the same day');
+  assert(JSON.parse(r.body).sent === 0 && weekly() === weeklyBefore, 'digest not sent twice on the same day');
 
   console.log('6. plans and billing (Lemon Squeezy)');
   const lsCalls = [];
@@ -244,6 +248,7 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
       { id: '21', attributes: { name: 'Studio Monthly', status: 'published', test_mode: lsTest } }, { id: '22', attributes: { name: 'Studio Yearly', status: 'published', test_mode: lsTest } },
       { id: '31', attributes: { name: 'Agency Monthly', status: 'published', test_mode: lsTest } }, { id: '32', attributes: { name: 'Agency Yearly', status: 'published', test_mode: lsTest } }] });
     if (u.pathname === '/v1/checkouts') return json(res, 201, { data: { id: 'chk1', attributes: { url: 'https://silit.lemonsqueezy.com/checkout/custom/abc' } } });
+    if (req.method === 'DELETE' && u.pathname.startsWith('/v1/subscriptions/')) return json(res, 200, { data: { id: u.pathname.split('/').pop(), attributes: { status: 'cancelled' } } });
     if (u.pathname === '/v1/subscriptions/900') return json(res, 200, { data: { id: '900', attributes: { urls: { customer_portal: 'https://silit.lemonsqueezy.com/billing?fresh=1' } } } });
     json(res, 404, {});
   });
@@ -297,6 +302,9 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
   assert(coTest.status === 503 && lsCalls.filter((c) => c.path === '/v1/checkouts').length === checkoutsBefore, 'test-mode checkout is refused for users');
   wh = await sendHook({ meta: { event_name: 'subscription_created', test_mode: true, custom_data: { user_id: 'user_1', sig } }, data: Object.assign(sub('active', 'Agency Monthly', { test_mode: true }), { id: '902' }) });
   assert(wh.body.ignored === 'test mode' && JSON.parse(db.get('user:user_1')).plan === 'free', 'test-mode payment does not upgrade a real user');
+  process.env.BILLING_TEST_EMAILS = 'tester@silitlabs.com';
+  const billingMod = require('../api/_lib/billing');
+  assert(!billingMod.isTester({ email: 'owner@agency.com', settings: { alertEmail: 'tester@silitlabs.com' } }) && billingMod.isTester({ email: 'Tester@silitlabs.com', settings: {} }), 'only the Webflow account email counts as a tester, not the editable alert email');
   process.env.BILLING_TEST_EMAILS = 'someone@else.com, OWNER@agency.com';
   const testerPage = await request(port, 'GET', '/app/settings', { headers: { Cookie: session } });
   assert(testerPage.body.includes('/app/billing/checkout'), 'tester sees checkout buttons in test mode');
@@ -305,7 +313,13 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
   assert(coTester.status === 302 && lastCo.body.data.attributes.test_mode === true, 'tester gets a test-mode checkout');
   wh = await sendHook({ meta: { event_name: 'subscription_created', test_mode: true, custom_data: { user_id: 'user_1', sig } }, data: Object.assign(sub('active', 'Agency Monthly', { test_mode: true }), { id: '903' }) });
   assert(wh.body.ok && JSON.parse(db.get('user:user_1')).plan === 'agency', 'tester test payment upgrades the plan');
-  wh = await sendHook({ meta: { event_name: 'subscription_expired', test_mode: true }, data: Object.assign(sub('expired', 'Agency Monthly', { test_mode: true, ends_at: iso(now - DAY) }), { id: '903' }) });
+  wh = await sendHook({ meta: { event_name: 'subscription_updated', test_mode: true }, data: Object.assign(sub('active', 'Agency Monthly', { test_mode: true, updated_at: iso(now) }), { id: '903' }) });
+  wh = await sendHook({ meta: { event_name: 'subscription_expired', test_mode: true }, data: Object.assign(sub('expired', 'Agency Monthly', { test_mode: true, ends_at: iso(now - DAY), updated_at: iso(now - 3600000) }), { id: '903' }) });
+  assert(wh.body.ignored === 'stale event' && JSON.parse(db.get('user:user_1')).plan === 'agency', 'a late, older webhook does not overwrite a newer one');
+  const lsBefore = lsCalls.length;
+  await billingMod.cancelSubscription(JSON.parse(db.get('user:user_1')));
+  assert(lsCalls.slice(lsBefore).some((c) => c.method === 'DELETE' && c.path === '/v1/subscriptions/903'), 'an active subscription can be cancelled at Lemon Squeezy (used when deleting the account)');
+  wh = await sendHook({ meta: { event_name: 'subscription_expired', test_mode: true }, data: Object.assign(sub('expired', 'Agency Monthly', { test_mode: true, ends_at: iso(now - DAY), updated_at: iso(now + 60000) }), { id: '903' }) });
   assert(JSON.parse(db.get('user:user_1')).plan === 'free', 'tester test subscription expiring returns to free');
   delete process.env.BILLING_TEST_EMAILS;
   lsTest = false;
@@ -370,6 +384,11 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
   const s3 = cookiesFrom(re);
   assert(re.status === 302 && JSON.parse(db.get('user:user_1')).siteIds.length === 3, 'reinstalled with 3 sites');
   wfState.revoked = true;
+  process.env.REVOKE_CONFIRM_MS = '600000';
+  const firstStrike = JSON.parse((await request(port, 'GET', '/cron/sync?key=cronkey')).body);
+  const u8a = JSON.parse(db.get('user:user_1'));
+  assert(firstStrike.results.some((x) => x.revokedPending) && u8a.connections.length === 1 && u8a.connections[0].revokedSince && db.has('site:siteA'), 'one 401 from Webflow does not delete anything yet');
+  process.env.REVOKE_CONFIRM_MS = '0';
   const syncR = await request(port, 'GET', '/cron/sync?key=cronkey');
   const u8 = JSON.parse(db.get('user:user_1'));
   assert(syncR.status === 200 && u8.connections.length === 0 && u8.siteIds.length === 0 && !db.has('site:siteA') && !db.has('site:siteB'), 'revoked authorization: token and its sites deleted');
@@ -393,6 +412,65 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
 
   const health = await request(port, 'GET', '/health');
   assert(health.status === 200 && health.body === 'ok', 'health ok');
+
+  console.log('10. hardening');
+  const checksMod = require('../api/_lib/checks');
+  // redirects are followed only on the site's own hosts
+  const inner = http.createServer((req, res) => { res.writeHead(200); res.end('internal'); });
+  const innerPort = await listen(inner);
+  let innerHits = 0; inner.on('request', () => innerHits++);
+  const hop = http.createServer((req, res) => { res.writeHead(302, { Location: 'http://127.0.0.1:' + innerPort + '/latest/meta-data/' }); res.end(); });
+  const hopPort = await listen(hop);
+  const r1 = await checksMod.httpCheck('http://127.0.0.1:' + hopPort + '/', 3000, ['127.0.0.1:' + hopPort]);
+  assert(r1.code === 302 && innerHits === 0, 'a redirect to another host is not followed');
+  const r2 = await checksMod.httpCheck('http://127.0.0.1:' + hopPort + '/', 3000, ['127.0.0.1:' + hopPort, '127.0.0.1:' + innerPort]);
+  assert(r2.code === 200 && innerHits === 1, 'a redirect within the site hosts is followed');
+  delete process.env.ALLOW_PRIVATE_CHECKS;
+  const r3 = await checksMod.httpCheck('http://127.0.0.1:' + innerPort + '/', 3000, []);
+  assert(r3.error === 'blocked address' && innerHits === 1, 'checks never request private or loopback addresses');
+  assert(checksMod.privateIp('169.254.169.254') && checksMod.privateIp('10.1.2.3') && checksMod.privateIp('::1') && checksMod.privateIp('::ffff:127.0.0.1') && !checksMod.privateIp('34.120.1.1'), 'private address ranges recognised');
+  process.env.ALLOW_PRIVATE_CHECKS = '1';
+  inner.close(); hop.close();
+  // 30-day uptime from daily totals
+  const stx = {};
+  checksMod.addDaily(stx, { t: Date.now() - 20 * DAY, ok: false, ms: 100 });
+  checksMod.addDaily(stx, { t: Date.now(), ok: true, ms: 300 });
+  const sum30 = checksMod.summarizeDaily(stx.daily, Date.now() - 30 * DAY);
+  assert(sum30.total === 2 && sum30.uptime === 50 && sum30.avgMs === 200, 'daily totals give the 30-day uptime');
+  // client report: SSL text and labels
+  const htmlMod = require('../api/_lib/html');
+  const repHtml = htmlMod.report({ settings: { brand: '' } }, { url: 'https://x.test', name: 'X', settings: {}, status: { sslExpiresAt: Date.now() - DAY, daily: stx.daily } }, [], Date.now());
+  assert(repHtml.includes("Expired") && !repHtml.includes(">Valid<") && repHtml.includes("50%"), 'report shows an expired certificate as Expired and 30-day uptime from daily totals');
+  // alert emails are retried until delivered
+  const alertsMod = require('../api/_lib/alerts');
+  const downSite = { id: 'siteZ', name: 'Zed', url: 'https://zed.test', settings: { alerts: true }, status: { fails: 3, code: 500 } };
+  const alertUser = { email: 'a@b.test', settings: { alerts: true, alertEmail: 'a@b.test' } };
+  resendFail = true;
+  const fail1 = await alertsMod.process(downSite, alertUser, Date.now());
+  assert(fail1.some((x) => x.type === 'down' && x.state === 'retry') && !db.has('alert:siteZ:down'), 'a failed alert email is not marked as sent');
+  resendFail = false;
+  const ok1 = await alertsMod.process(downSite, alertUser, Date.now());
+  assert(ok1.some((x) => x.type === 'down' && x.state === 'opened') && db.has('alert:siteZ:down') && emails.slice(-1)[0].subject.includes('Zed is down'), 'the alert email goes out on the next run');
+  // signed notices only
+  const s10 = cookiesFrom(await request(port, 'GET', '/callback?code=install-code'));
+  const forgedNotice = await request(port, 'GET', '/app?notice=' + encodeURIComponent('Your account is suspended, call 555'), { headers: { Cookie: s10 } });
+  assert(forgedNotice.status === 200 && !forgedNotice.body.includes('suspended'), 'a notice typed into the URL is not shown');
+  // sign in: index backfill and limits
+  const uRec = JSON.parse(db.get('user:user_1'));
+  db.delete('email:' + uRec.email); db.delete('migr:email-index');
+  const rebuilt = await require('../api/_lib/store').ensureEmailIndex();
+  const rebuiltAgain = await require('../api/_lib/store').ensureEmailIndex();
+  assert(rebuilt >= 1 && rebuiltAgain === 0 && db.has('email:' + uRec.email), 'the email index is rebuilt once for older accounts');
+  const loginFrom = (ip, addr) => request(port, 'POST', '/login', { headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Forwarded-For': ip }, body: form({ email: addr }) });
+  for (let i = 0; i < 10; i++) await loginFrom('203.0.113.9', 'nobody' + i + '@example.com');
+  db.delete('loginrl:' + uRec.email);
+  const mailsBefore = emails.length;
+  await loginFrom('203.0.113.9', uRec.email);
+  assert(emails.length === mailsBefore, 'more than 10 sign in requests from one IP in 10 minutes send nothing');
+  await loginFrom('198.51.100.7', uRec.email);
+  assert(emails.length === mailsBefore + 1, 'another IP can still sign in');
+  const longEmail = await loginFrom('198.51.100.8', 'a'.repeat(300) + '@example.com');
+  assert(longEmail.status === 302 && longEmail.headers.location === '/login?bad=1', 'over-long email addresses are refused');
 
   console.log(`\n${passed} passed, ${failed} failed`);
   [redis, siteA, siteB, resend, webflow, app].forEach((s) => s.close());

@@ -1,6 +1,6 @@
 'use strict';
 // Server-rendered pages. No framework, one CSS block, tokens for light and dark.
-const { summarize } = require('./checks');
+const { summarize, summarizeDaily } = require('./checks');
 const { unpublishedDays, DAY } = require('./sync');
 const { PLAN_LIMITS, CMS_LIMITS } = require('./store');
 const { PLANS } = require('./billing');
@@ -201,9 +201,9 @@ function issueList(items, kind) {
 
 function siteDetail(user, site, checks, now, notice) {
   now = now || Date.now();
-  const s7 = summarize(checks, now - 7 * DAY);
-  const s30 = summarize(checks, now - 30 * DAY);
+  const s7 = summarize(checks, now - 7 * DAY); // checks are kept for 7 days
   const st = site.status || {};
+  const s30 = summarizeDaily(st.daily, now - 30 * DAY); // daily totals for 30 days
   const f = site.data && site.data.forms;
   const p = site.data && site.data.pages;
   const cms = site.data && site.data.cms;
@@ -254,10 +254,12 @@ ${reportUrl ? `<p class="mono" style="word-break:break-all">${esc(reportUrl)}</p
 
 function report(user, site, checks, now) {
   now = now || Date.now();
-  const s30 = summarize(checks, now - 30 * DAY);
   const f = site.data && site.data.forms;
   const p = site.data && site.data.pages;
   const st = site.status || {};
+  const s30 = summarizeDaily(st.daily, now - 30 * DAY); // daily totals for 30 days (single checks are kept 7 days)
+  const sslOk = st.sslExpiresAt && st.sslExpiresAt > now && !st.sslError;
+  const sslText = !st.sslExpiresAt ? '-' : st.sslExpiresAt <= now ? 'Expired' : sslOk ? 'Valid' : 'Check';
   const brand = (user && user.settings && user.settings.brand) || '';
   const body = `
 <div class="head"><div><p class="muted small">${esc(brand || 'Site report')}</p><h1>${esc(site.settings.client || site.name)}</h1><p class="muted">${esc(site.url)} · last 30 days · ${new Date(now).toUTCString().slice(0, 16)}</p></div></div>
@@ -265,11 +267,11 @@ function report(user, site, checks, now) {
 <div class="stat"><div class="n">${s30.uptime == null ? '-' : s30.uptime + '%'}</div><div class="l">Uptime</div></div>
 <div class="stat"><div class="n">${s30.avgMs == null ? '-' : s30.avgMs}</div><div class="l">Avg response ms</div></div>
 <div class="stat"><div class="n">${f ? f.total30 : '-'}</div><div class="l">Form submissions</div></div>
-<div class="stat"><div class="n">${st.sslExpiresAt ? 'Valid' : '-'}</div><div class="l">SSL certificate</div></div>
+<div class="stat"><div class="n">${sslText}</div><div class="l">SSL certificate</div></div>
 <div class="stat"><div class="n">${p ? p.issues : '-'}</div><div class="l">SEO issues open</div></div>
 </div>
 <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(min(100%,440px),1fr))">
-<div class="panel"><h3>Availability</h3>${uptimeBars(checks, now)}<p class="muted small" style="margin-top:8px">${s30.total} checks in the period, ${s30.okCount} successful. Checked every 5 minutes.</p></div>
+<div class="panel"><h3>Availability</h3>${uptimeBars(checks, now)}<p class="muted small" style="margin-top:8px">${s30.total} checks in the period, ${s30.okCount} successful. Checked every 5 minutes; the bars show the last 7 days.</p></div>
 <div class="panel"><h3>Forms</h3>${f && f.perForm.length ? `<ul class="issues">${f.perForm.map((x) => `<li>${esc(x.name)} <span>${x.count30} submissions</span></li>`).join('')}</ul>` : '<p class="muted" style="margin-top:6px">No submissions in the period.</p>'}</div>
 <div class="panel"><h3>Publishing</h3><p style="margin-top:6px">Last published ${esc(fmtDate(site.lastPublished))}. ${unpublishedDays(site, now) == null ? 'Everything is live.' : 'Some changes are waiting to be published.'}</p></div>
 <div class="panel"><h3>SEO health</h3>${p ? `<ul class="issues"><li>Pages checked <span>${p.live}</span></li><li>Missing titles <span>${p.missingTitle.length}</span></li><li>Missing descriptions <span>${p.missingDesc.length}</span></li><li>Duplicate titles <span>${p.dupTitle.length}</span></li></ul>` : '<p class="muted">Not available yet.</p>'}</div>

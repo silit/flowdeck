@@ -51,11 +51,18 @@ async function findUserByEmail(email) {
     const u = await getUser(idx.u);
     if (u && String(u.email || '').toLowerCase() === e) return u;
   }
+  // No scan of all users here: an unknown address must cost the same few reads as a known one.
+  // ensureEmailIndex() fills the index once for accounts created before it existed.
+  return null;
+}
+async function ensureEmailIndex() {
+  if (!(await kv.setNX('migr:email-index', { at: Date.now() }))) return 0;
+  let n = 0;
   for (const id of await allUserIds()) {
     const u = await getUser(id);
-    if (u && String(u.email || '').toLowerCase() === e) return u;
+    if (u && u.email) { await kv.setJSON('email:' + String(u.email).toLowerCase(), { u: u.id }); n++; }
   }
-  return null;
+  return n;
 }
 async function createLoginToken(userId) {
   const t = random(24);
@@ -65,11 +72,16 @@ async function createLoginToken(userId) {
 async function peekLoginToken(t) { return t ? kv.getJSON('login:' + sha256(t)) : null; }
 async function consumeLoginToken(t) {
   if (!t) return null;
-  const rec = await kv.getJSON('login:' + sha256(t));
-  if (rec) await kv.del('login:' + sha256(t));
-  return rec;
+  // GETDEL reads and deletes in one step, so two requests at once cannot both use the link
+  return kv.getDelJSON('login:' + sha256(t));
 }
 async function loginRateOk(email) { return kv.setNX('loginrl:' + String(email).toLowerCase(), { at: Date.now() }, 60); }
+// Counter-based limit: at most `max` hits per `windowSec` for a key (an IP address, or "all").
+async function rateOk(key, max, windowSec) {
+  const n = await kv.incr('rl:' + key);
+  if (n === 1) await kv.expire('rl:' + key, windowSec);
+  return n <= max;
+}
 async function allUserIds() { return kv.smembers('users:all'); }
 
 function newUser(info) {
@@ -123,6 +135,12 @@ async function saveSite(site) {
   if (site.monitored) await kv.sadd('sites:all', site.id); else await kv.srem('sites:all', site.id);
   return site;
 }
+// Saves only the record (the site is already in sites:all). Used by the 5-minute checks to save commands.
+async function saveSiteRecord(site) {
+  site.updatedAt = Date.now();
+  await kv.setJSON('site:' + site.id, site);
+  return site;
+}
 async function allSiteIds() { return kv.smembers('sites:all'); }
 async function deleteSite(id) {
   await kv.del('site:' + id, 'uptime:' + id);
@@ -170,10 +188,19 @@ function refreshMeta(site, meta) {
   return site;
 }
 
-async function pushCheck(siteId, check) { return kv.lpushJSON('uptime:' + siteId, check, UPTIME_KEEP); }
+// LPUSH every time; trim only when the list has grown 24 past the limit (one LTRIM per ~2 hours per site).
+async function pushCheck(siteId, check) {
+  const n = await kv.command('LPUSH', 'uptime:' + siteId, JSON.stringify(check));
+  if (n > UPTIME_KEEP + 24) await kv.command('LTRIM', 'uptime:' + siteId, '0', String(UPTIME_KEEP - 1));
+  return n;
+}
 async function recentChecks(siteId, count) { return kv.lrangeJSON('uptime:' + siteId, count || UPTIME_KEEP); }
 
 async function getAlert(siteId, type) { return kv.getJSON(`alert:${siteId}:${type}`); }
+async function getAlerts(siteId, types) {
+  const vals = await kv.mgetJSON(types.map((t) => `alert:${siteId}:${t}`));
+  return Object.fromEntries(types.map((t, i) => [t, vals[i] || null]));
+}
 async function setAlert(siteId, type, state) { return kv.setJSON(`alert:${siteId}:${type}`, state); }
 async function clearAlert(siteId, type) { return kv.del(`alert:${siteId}:${type}`); }
 
@@ -210,13 +237,41 @@ async function enforceLimit(user, limit) {
   return changed;
 }
 
+// Webflow answered 401 for this connection. Delete it only after a second 401 at least
+// REVOKE_CONFIRM_MS (default 10 minutes) later, so a short Webflow incident cannot wipe an account.
+// Returns the removed connection, or null while waiting for confirmation. The caller saves the user.
+async function confirmRevoked(user, connId, now) {
+  now = now || Date.now();
+  const conn = (user.connections || []).find((c) => c.id === connId);
+  if (!conn) return null;
+  const raw = process.env.REVOKE_CONFIRM_MS;
+  const wait = raw != null && raw !== '' && !isNaN(parseInt(raw, 10)) ? parseInt(raw, 10) : 600000;
+  if (!conn.revokedSince) {
+    conn.revokedSince = now;
+    if (wait > 0) { await saveUser(user); return null; }
+  }
+  if (now - conn.revokedSince < wait) return null;
+  return removeConnection(user, connId);
+}
+// A successful call clears an earlier 401 strike. Returns true when the user record changed.
+function clearRevoked(user, connId) {
+  const conn = (user.connections || []).find((c) => c.id === connId);
+  if (conn && conn.revokedSince) { delete conn.revokedSince; return true; }
+  return false;
+}
+
+// Weekly digest progress per user, so a timeout or error never skips the rest for a week.
+async function digestDone(day, userId) { return !!(await kv.getJSON(`digestsent:${day}:${userId}`)); }
+async function markDigestDone(day, userId) { return kv.setJSON(`digestsent:${day}:${userId}`, { at: Date.now() }, 3 * 86400); }
+
 async function lock(name, ttl) { return kv.setNX('lock:' + name, { at: Date.now() }, ttl || 240); }
 async function unlock(name) { return kv.del('lock:' + name); }
 
 module.exports = {
   PLAN_LIMITS, CMS_LIMITS, UPTIME_KEEP, limitFor,
   getUser, saveUser, allUserIds, newUser, addConnection, tokenOf, removeConnection,
-  findUserByEmail, createLoginToken, peekLoginToken, consumeLoginToken, loginRateOk,
-  getSite, getSites, saveSite, allSiteIds, deleteSite, newSite, refreshMeta, primaryUrl,
-  pushCheck, recentChecks, getAlert, setAlert, clearAlert, ensureReportToken, siteIdForReport, deleteReport, deleteUser, enforceLimit, lock, unlock
+  findUserByEmail, ensureEmailIndex, createLoginToken, peekLoginToken, consumeLoginToken, loginRateOk, rateOk,
+  getSite, getSites, saveSite, saveSiteRecord, allSiteIds, deleteSite, newSite, refreshMeta, primaryUrl,
+  pushCheck, recentChecks, getAlert, getAlerts, setAlert, clearAlert, ensureReportToken, siteIdForReport, deleteReport, deleteUser, enforceLimit,
+  confirmRevoked, clearRevoked, digestDone, markDigestDone, lock, unlock
 };

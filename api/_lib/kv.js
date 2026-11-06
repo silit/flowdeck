@@ -56,6 +56,7 @@ async function setJSON(key, value, ttl) {
   if (ttl) args.push('EX', String(ttl));
   return command(...args);
 }
+async function getDelJSON(key) { return parse(await command('GETDEL', key)); }
 async function del(...keys) { return keys.length ? command('DEL', ...keys) : 0; }
 async function setNX(key, value, ttl) {
   const args = ['SET', key, JSON.stringify(value), 'NX'];
@@ -76,4 +77,4 @@ async function lrangeJSON(key, count) {
 async function incr(key) { return command('INCR', key); }
 async function expire(key, ttl) { return command('EXPIRE', key, String(ttl)); }
 
-module.exports = { enabled, command, pipeline, getJSON, mgetJSON, setJSON, del, setNX, sadd, srem, smembers, lpushJSON, lrangeJSON, incr, expire };
+module.exports = { enabled, command, pipeline, getJSON, getDelJSON, mgetJSON, setJSON, del, setNX, sadd, srem, smembers, lpushJSON, lrangeJSON, incr, expire };

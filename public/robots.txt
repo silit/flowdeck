@@ -1,0 +1,7 @@
+User-agent: *
+Disallow: /app
+Disallow: /l/
+Disallow: /cron/
+Disallow: /callback
+Disallow: /auth
+Disallow: /billing/

@@ -50,19 +50,25 @@ async function processSite(site, user, now) {
   const to = (user.settings.alertEmail || user.email || '').trim();
   const found = evaluate(site, now);
   const sent = [];
+  const states = await store.getAlerts(site.id, Object.keys(RULES)); // one read for all rules
   for (const type of Object.keys(RULES)) {
     const rule = RULES[type];
-    const state = await store.getAlert(site.id, type);
+    const state = states[type];
     const active = !!found[type];
     if (active && !state) {
-      await store.setAlert(site.id, type, { since: now || Date.now(), detail: found[type] });
       if (to) {
         const subject = rule.title(site, found[type]);
         const body = rule.body(site, found[type]);
         try {
           await email.send({ to, subject: '[Flowdeck] ' + subject, text: body + '\n\nOpen Flowdeck: ' + appUrl() + '/app/site?id=' + site.id, html: `<p>${esc(body)}</p><p><a href="${appUrl()}/app/site?id=${site.id}">Open in Flowdeck</a></p>` });
-        } catch (e) { console.error('[alert email]', e.message); }
+        } catch (e) {
+          // Not recorded as sent: the next run tries again, so a failed email never hides an outage.
+          console.error('[alert email]', e.message);
+          sent.push({ type, state: 'retry' });
+          continue;
+        }
       }
+      await store.setAlert(site.id, type, { since: now || Date.now(), detail: found[type] });
       sent.push({ type, state: 'opened' });
     } else if (!active && state) {
       await store.clearAlert(site.id, type);

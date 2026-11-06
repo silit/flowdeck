@@ -36,6 +36,19 @@ Plan limitleri `store.js` içinde: Free 1, Solo 5 ($9), Studio 15 ($24), Agency 
 
 Mağazada sadece test modu ürünler varken (Lemon Squeezy mağazayı henüz onaylamadıysa) ücretli butonlar gizlenir, "Paid plans are opening shortly" yazar ve test ödemeleri hiçbir kullanıcının planını değiştirmez. Test etmek isteyen hesapların e-postası `BILLING_TEST_EMAILS` içine virgülle yazılır. Mağaza onaylanınca: ürünleri canlı moda kopyala, canlı API anahtarı ve canlı webhook oluştur, Vercel'deki `LEMONSQUEEZY_*` değerlerini güncelle; butonlar herkese kendiliğinden açılır.
 
+## Güvenlik ve dayanıklılık notları
+
+- `SESSION_SECRET` hem oturum çerezlerini hem kayıtlı Webflow tokenlarını şifreler. **Asla değiştirme**: değişirse herkesin oturumu kapanır ve kayıtlı tokenlar açılamaz (kullanıcıların Webflow'u yeniden bağlaması gerekir).
+- Webflow bir bağlantı için 401 dönerse hemen silinmez: en az 10 dakika sonra ikinci bir 401 gelirse token ve siteleri silinir (`REVOKE_CONFIRM_MS`, varsayılan 600000).
+- Uptime kontrolleri yönlendirmeleri sadece sitenin kendi alan adları içinde izler; özel, loopback ve link-local adreslere hiç istek atmaz (`ALLOW_PRIVATE_CHECKS=1` sadece yerel testler içindir, canlıda koyma).
+- Uyarı e-postası gönderilemezse uyarı "gönderildi" sayılmaz, bir sonraki kontrolde tekrar denenir.
+- Haftalık özet kullanıcı başına ilerlemeyi tutar; yarıda kalırsa aynı gün sonraki çalıştırma kaldığı yerden devam eder. Bu yüzden `cron/digest` işini cron-job.org'da her saat çalıştırmak güvenlidir (sadece pazartesi gönderir).
+- Giriş linki: adres başına dakikada 1, IP başına 10 dakikada 10, toplamda saatte 300 istek.
+- Bildirimler (`?notice=`) imzalı; URL'ye yazılan metin sayfada görünmez.
+- Hesap silinirken aktif abonelik varsa önce Lemon Squeezy'de iptal edilir; iptal edilemezse silme durur.
+- Cron anahtarı adres yerine `x-cron-secret` başlığıyla da gönderilebilir (cron-job.org > işin Advanced ayarları > Headers); böylece anahtar loglarda görünmez.
+- Upstash: 5 dakikalık kontrol site başına yaklaşık 3 komut (ayda site başına ~26 bin); kontrol ve senkron işlerinin sabit yükü ayda ~100 bin. Ücretsiz katman (ayda 500 bin komut) yaklaşık 10 siteye kadar yeter; daha fazlası için Upstash'e kredi kartı ekleyip kullandıkça öde planına geç (100 bin komut 0,20 USD, 100 site için ayda birkaç dolar).
+
 ## Yayına alma
 
 1. **GitHub:** public `flowdeck` repo'su, bu klasör push.
