@@ -2,31 +2,70 @@
 // Uptime and SSL checks. Pure network code, no storage.
 const tls = require('tls');
 const net = require('net');
-const dns = require('dns').promises;
+const dns = require('dns');
+const http = require('http');
+const https = require('https');
 
 const UA = 'Mozilla/5.0 (compatible; Flowdeck/1.0; +https://flowdeck.silitlabs.com)';
 
-// Never send a check to a private, loopback or link-local address (a customer could point
-// their domain's DNS there). ALLOW_PRIVATE_CHECKS=1 is only for the local test suite.
+// Never send a check to a private, loopback, link-local or other special address (a customer
+// could point their domain's DNS there). The address is checked inside the connection's own
+// DNS lookup, so a record that changes between two lookups (DNS rebinding) cannot slip past.
+// ALLOW_PRIVATE_CHECKS=1 is only for the local test suite.
 function privateIp(ip) {
   if (net.isIPv4(ip)) {
-    const [a, b] = ip.split('.').map(Number);
-    return a === 0 || a === 10 || a === 127 || a >= 224 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
+    const [a, b, c] = ip.split('.').map(Number);
+    return a === 0 || a === 10 || a === 127 || a >= 224 ||
+      (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) ||
+      (a === 100 && b >= 64 && b <= 127) || (a === 198 && (b === 18 || b === 19)) ||
+      (a === 192 && b === 0 && (c === 0 || c === 2)) || (a === 198 && b === 51 && c === 100) || (a === 203 && b === 0 && c === 113);
   }
   if (net.isIPv6(ip)) {
     const x = ip.toLowerCase();
     if (x.startsWith('::ffff:')) return privateIp(x.slice(7));
-    return x === '::1' || x === '::' || x.startsWith('fc') || x.startsWith('fd') || x.startsWith('fe8') || x.startsWith('fe9') || x.startsWith('fea') || x.startsWith('feb');
+    return x === '::1' || x === '::' || x.startsWith('64:ff9b:') || x.startsWith('fc') || x.startsWith('fd') ||
+      x.startsWith('fe8') || x.startsWith('fe9') || x.startsWith('fea') || x.startsWith('feb') || x.startsWith('ff') || x.startsWith('2001:db8:');
   }
   return true;
 }
-async function publicHost(host) {
-  if (process.env.ALLOW_PRIVATE_CHECKS === '1') return true;
-  if (net.isIP(host)) return !privateIp(host);
-  try {
-    const addrs = await dns.lookup(host, { all: true });
-    return addrs.length > 0 && addrs.every((a) => !privateIp(a.address));
-  } catch (e) { return false; }
+const allowPrivate = () => process.env.ALLOW_PRIVATE_CHECKS === '1';
+function blockedError() { const e = new Error('blocked address'); e.code = 'EBLOCKED'; return e; }
+
+// dns.lookup replacement handed to http/https/tls: same answers, but refuses special addresses.
+function safeLookup(hostname, options, cb) {
+  if (typeof options === 'function') { cb = options; options = {}; }
+  const opts = typeof options === 'number' ? { family: options } : Object.assign({}, options);
+  dns.lookup(hostname, Object.assign({}, opts, { all: true }), (err, addrs) => {
+    if (err) return cb(err);
+    const list = (addrs || []).filter(Boolean);
+    if (!list.length) return cb(Object.assign(new Error('no address'), { code: 'ENOTFOUND' }));
+    if (!allowPrivate() && list.some((a) => privateIp(a.address))) return cb(blockedError());
+    if (opts.all) return cb(null, list);
+    cb(null, list[0].address, list[0].family);
+  });
+}
+function literalBlocked(host) {
+  const h = String(host || '').replace(/^\[|\]$/g, '');
+  return !allowPrivate() && net.isIP(h) && privateIp(h);
+}
+
+// One GET without following redirects. Resolves with the status and Location as soon as the
+// headers arrive; the body is not downloaded.
+function getOnce(url, deadline) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    if (literalBlocked(u.hostname)) return reject(blockedError());
+    const lib = u.protocol === 'https:' ? https : http;
+    const left = Math.max(1, deadline - Date.now());
+    const req = lib.request(u, { method: 'GET', lookup: safeLookup, headers: { 'User-Agent': UA, Accept: 'text/html' } }, (res) => {
+      resolve({ status: res.statusCode, location: res.headers.location || null });
+      res.destroy();
+    });
+    const timer = setTimeout(() => req.destroy(Object.assign(new Error('timeout'), { code: 'ETIMEOUT' })), left);
+    req.on('error', (e) => { clearTimeout(timer); reject(e); });
+    req.on('close', () => clearTimeout(timer));
+    req.end();
+  });
 }
 
 // GET the page. Redirects are followed only while they stay on the same scheme and on one of
@@ -34,22 +73,19 @@ async function publicHost(host) {
 // redirect itself counts as the answer.
 async function httpCheck(url, timeoutMs, allowedHosts) {
   const started = Date.now();
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs || 10000);
+  const deadline = started + (timeoutMs || 10000);
   try {
     let current = url;
     let res;
     for (let hops = 0; ; hops++) {
-      const u = new URL(current);
-      if (!(await publicHost(u.hostname.replace(/^\[|\]$/g, '')))) return { t: Date.now(), ok: false, code: 0, ms: Date.now() - started, error: 'blocked address' };
-      res = await fetch(current, { method: 'GET', redirect: 'manual', signal: ctrl.signal, headers: { 'User-Agent': UA, Accept: 'text/html' } });
-      const loc = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
+      res = await getOnce(current, deadline);
+      const loc = res.status >= 300 && res.status < 400 ? res.location : null;
       if (!loc || hops >= 5) break;
       let next;
       try { next = new URL(loc, current); } catch (e) { break; }
+      const u = new URL(current);
       const hostKey = (next.port ? next.hostname + ':' + next.port : next.hostname).toLowerCase();
       if (next.protocol !== u.protocol || next.username || next.password || !(allowedHosts || []).includes(hostKey)) break;
-      try { if (res.body) await res.body.cancel(); } catch (e) { /* ignore */ }
       current = next.href;
     }
     const ms = Date.now() - started;
@@ -57,20 +93,19 @@ async function httpCheck(url, timeoutMs, allowedHosts) {
     const ok = res.status < 500 && res.status !== 404 && res.status !== 410;
     return { t: Date.now(), ok, code: res.status, ms };
   } catch (e) {
-    return { t: Date.now(), ok: false, code: 0, ms: Date.now() - started, error: e.name === 'AbortError' ? 'timeout' : (e.cause && e.cause.code) || e.message };
-  } finally {
-    clearTimeout(timer);
+    const error = e.code === 'EBLOCKED' ? 'blocked address' : e.code === 'ETIMEOUT' ? 'timeout' : (e.code || e.message);
+    return { t: Date.now(), ok: false, code: 0, ms: Date.now() - started, error };
   }
 }
 
-async function sslCheck(host, timeoutMs) {
-  if (!(await publicHost(host))) return { ok: false, expiresAt: null, error: 'blocked address' };
+function sslCheck(host, timeoutMs) {
+  if (literalBlocked(host)) return Promise.resolve({ ok: false, expiresAt: null, error: 'blocked address' });
   return new Promise((resolve) => {
     let done = false;
     const finish = (r) => { if (!done) { done = true; resolve(r); } };
     let socket;
     try {
-      socket = tls.connect({ host, port: 443, servername: host, timeout: timeoutMs || 8000, rejectUnauthorized: false }, () => {
+      socket = tls.connect({ host, port: 443, servername: host, timeout: timeoutMs || 8000, rejectUnauthorized: false, lookup: safeLookup }, () => {
         const cert = socket.getPeerCertificate();
         const validTo = cert && cert.valid_to ? Date.parse(cert.valid_to) : null;
         const authorized = socket.authorized;
@@ -79,7 +114,7 @@ async function sslCheck(host, timeoutMs) {
         finish({ ok: !!validTo && authorized, expiresAt: validTo, error: authorized ? '' : err });
       });
       socket.on('timeout', () => { socket.destroy(); finish({ ok: false, expiresAt: null, error: 'timeout' }); });
-      socket.on('error', (e) => finish({ ok: false, expiresAt: null, error: e.code || e.message }));
+      socket.on('error', (e) => finish({ ok: false, expiresAt: null, error: e.code === 'EBLOCKED' ? 'blocked address' : (e.code || e.message) }));
     } catch (e) {
       finish({ ok: false, expiresAt: null, error: e.message });
     }

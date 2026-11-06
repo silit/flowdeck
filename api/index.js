@@ -75,16 +75,19 @@ function queryOf(req) {
   delete q.path;
   return q;
 }
-// Notices passed in a redirect URL are signed, so nobody can put their own text on our pages.
-function noticeQuery(text) {
-  const t = String(text || '').slice(0, 300);
-  return 'notice=' + encodeURIComponent(t) + '&ns=' + crypto.createHmac('sha256', process.env.SESSION_SECRET || 'flowdeck').update('notice:' + t).digest('hex').slice(0, 16);
+// Notices passed in a redirect URL are signed for the user they were made for, so nobody can put
+// their own text on our pages or send a crafted notice link to someone else.
+function noticeSig(userId, t) {
+  return crypto.createHmac('sha256', process.env.SESSION_SECRET || 'flowdeck').update('notice:' + userId + ':' + t).digest('hex').slice(0, 16);
 }
-function noticeFrom(q) {
-  if (!q.notice || !q.ns) return '';
+function noticeQuery(user, text) {
+  const t = String(text || '').slice(0, 300);
+  return 'notice=' + encodeURIComponent(t) + '&ns=' + noticeSig(user.id, t);
+}
+function noticeFrom(q, user) {
+  if (!q.notice || !q.ns || !user) return '';
   const t = String(q.notice);
-  const sig = crypto.createHmac('sha256', process.env.SESSION_SECRET || 'flowdeck').update('notice:' + t).digest('hex').slice(0, 16);
-  return timingEqual(String(q.ns), sig) ? t : '';
+  return timingEqual(String(q.ns), noticeSig(user.id, t)) ? t : '';
 }
 function sameOrigin(req) {
   const origin = req.headers.origin || req.headers.referer || '';
@@ -198,7 +201,7 @@ async function handleCallback(req, res) {
   }
 
   res.setHeader('Set-Cookie', [sessionCookie(user.id), cookie('fd_state', '', 0)]);
-  redirect(res, '/app' + (notices.length ? '?' + noticeQuery(notices.join(' ')) : (added ? '?added=' + added : '')));
+  redirect(res, '/app' + (notices.length ? '?' + noticeQuery(user, notices.join(' ')) : (added ? '?added=' + added : '')));
 }
 
 /* ---------- app pages ---------- */
@@ -209,7 +212,7 @@ async function handleApp(req, res, user) {
   const sites = await store.getSites(user.siteIds || []);
   const checksBySite = {};
   for (const s of sites) checksBySite[s.id] = await store.recentChecks(s.id);
-  let notice = html.esc(noticeFrom(q));
+  let notice = html.esc(noticeFrom(q, user));
   const added = parseInt(q.added, 10);
   if (added > 0) notice = `${added} site${added === 1 ? '' : 's'} connected. First data is loading; uptime starts within 5 minutes.`;
   if (q.synced) notice = 'Data refreshed from Webflow.';
@@ -222,6 +225,7 @@ async function handleSync(req, res, user) {
   const b = await readBody(req);
   const one = b.id ? await ownedSite(user, String(b.id)) : null;
   const sites = one ? [one] : (await store.getSites(user.siteIds || [])).filter((s) => s.monitored).sort((a, b) => (a.syncedAt || 0) - (b.syncedAt || 0)).slice(0, 10);
+  let refused = 0;
   for (const site of sites) {
     const conn = user.connections.find((c) => c.id === site.connectionId);
     const token = conn && store.tokenOf(conn);
@@ -230,17 +234,20 @@ async function handleSync(req, res, user) {
     try {
       await syncSite(site, token, { pages: 300, collections: 20, submissions: 300 });
       if (site.data && site.data.forms) site.data.forms.before30 = before ? Math.max(before.total30 || 0, before.before30 || 0) : 0;
-      await store.saveSite(site);
+      await store.saveSiteSync(site);
       if (store.clearRevoked(user, site.connectionId)) await store.saveUser(user);
     } catch (e) {
       if (wf.isRevoked(e)) {
+        refused++;
         const removed = await store.confirmRevoked(user, site.connectionId, Date.now());
         if (removed) { user.notice = revokedNotice(removed); await store.saveUser(user); }
       }
     }
   }
-  if (one && (user.siteIds || []).includes(one.id)) return redirect(res, '/app/site?id=' + encodeURIComponent(one.id) + '&synced=1');
-  redirect(res, '/app?synced=1');
+  if (user.notice) return redirect(res, '/app');
+  const msg = refused ? noticeQuery(user, 'Webflow refused access for ' + (refused === 1 ? 'one site' : refused + ' sites') + '. If you uninstalled Flowdeck in Webflow, its data will be deleted shortly; otherwise try Refresh again in a few minutes.') : '';
+  if (one && (user.siteIds || []).includes(one.id)) return redirect(res, '/app/site?id=' + encodeURIComponent(one.id) + '&' + (msg || 'synced=1'));
+  redirect(res, '/app?' + (msg || 'synced=1'));
 }
 
 async function ownedSite(user, id) {
@@ -329,13 +336,13 @@ async function handleSiteRemove(req, res, user) {
   await store.deleteSite(site.id);
   user.siteIds = user.siteIds.filter((id) => id !== site.id);
   await store.saveUser(user);
-  redirect(res, '/app?' + noticeQuery(site.name + ' removed.'));
+  redirect(res, '/app?' + noticeQuery(user, site.name + ' removed.'));
 }
 
 async function handleSettingsPage(req, res, user) {
   const q = queryOf(req);
   const sites = await store.getSites(user.siteIds || []);
-  const notice = q.upgraded ? 'Thanks! Your plan updates as soon as the payment is confirmed, usually within a minute.' : (q.saved ? 'Settings saved.' : html.esc(noticeFrom(q)));
+  const notice = q.upgraded ? 'Thanks! Your plan updates as soon as the payment is confirmed, usually within a minute.' : (q.saved ? 'Settings saved.' : html.esc(noticeFrom(q, user)));
   send(res, 200, html.settings(user, sites, notice, { billing: await billing.canCheckout(user) }));
 }
 
@@ -388,7 +395,7 @@ async function handleDisconnect(req, res, user) {
   await wf.revokeToken({ clientId: env.clientId, clientSecret: env.clientSecret, token: store.tokenOf(removed) });
   await store.saveUser(user);
   const n = removed._sites.length;
-  redirect(res, '/app/settings?' + noticeQuery(`Disconnected ${removed.label || 'Webflow'}: access revoked, token and ${n} site${n === 1 ? '' : 's'} deleted.`));
+  redirect(res, '/app/settings?' + noticeQuery(user, `Disconnected ${removed.label || 'Webflow'}: access revoked, token and ${n} site${n === 1 ? '' : 's'} deleted.`));
 }
 
 /* ---------- sign in by email link (returning users) ---------- */
@@ -400,19 +407,20 @@ async function handleLoginPage(req, res) {
 
 function clientIp(req) {
   const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-  return fwd || String(req.headers['x-real-ip'] || '') || (req.socket && req.socket.remoteAddress) || 'unknown';
+  const ip = fwd || String(req.headers['x-real-ip'] || '') || (req.socket && req.socket.remoteAddress) || 'unknown';
+  // One IPv6 user usually holds a whole /64, so count the /64 as one address
+  return ip.includes(':') && !ip.startsWith('::ffff:') ? ip.split(':').slice(0, 4).join(':') + '::/64' : ip;
 }
 
 async function handleLoginPost(req, res) {
   const b = await readBody(req);
   const addr = String(b.email || '').trim().toLowerCase();
   if (addr.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) return redirect(res, '/login?bad=1');
-  // Limits: one link per address per minute, 10 requests per IP per 10 minutes, 300 links an hour in total
-  // (protects the database and the email quota that alerts depend on).
-  const allowed = (await store.rateOk('login-ip:' + clientIp(req), 10, 600)) && (await store.loginRateOk(addr));
-  if (allowed && (await store.rateOk('login-all', 300, 3600))) {
+  // Limits: 10 requests per IP per 10 minutes; for real accounts, one link per address per minute and
+  // 300 links an hour in total. Unknown addresses never use up the shared budget.
+  if (await store.rateOk('login-ip:' + clientIp(req), 10, 600)) {
     const user = await store.findUserByEmail(addr);
-    if (user) {
+    if (user && (await store.loginRateOk(addr)) && (await store.rateOk('login-all', 300, 3600))) {
       const t = await store.createLoginToken(user.id);
       const link = ENV().appUrl + '/l/' + t;
       try {

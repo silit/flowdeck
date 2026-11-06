@@ -248,6 +248,8 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
       { id: '21', attributes: { name: 'Studio Monthly', status: 'published', test_mode: lsTest } }, { id: '22', attributes: { name: 'Studio Yearly', status: 'published', test_mode: lsTest } },
       { id: '31', attributes: { name: 'Agency Monthly', status: 'published', test_mode: lsTest } }, { id: '32', attributes: { name: 'Agency Yearly', status: 'published', test_mode: lsTest } }] });
     if (u.pathname === '/v1/checkouts') return json(res, 201, { data: { id: 'chk1', attributes: { url: 'https://silit.lemonsqueezy.com/checkout/custom/abc' } } });
+    if (req.method === 'DELETE' && u.pathname === '/v1/subscriptions/gone') return json(res, 404, { errors: [{ detail: 'not found' }] });
+    if (req.method === 'DELETE' && u.pathname === '/v1/subscriptions/broken') return json(res, 500, { errors: [{ detail: 'server error' }] });
     if (req.method === 'DELETE' && u.pathname.startsWith('/v1/subscriptions/')) return json(res, 200, { data: { id: u.pathname.split('/').pop(), attributes: { status: 'cancelled' } } });
     if (u.pathname === '/v1/subscriptions/900') return json(res, 200, { data: { id: '900', attributes: { urls: { customer_portal: 'https://silit.lemonsqueezy.com/billing?fresh=1' } } } });
     json(res, 404, {});
@@ -319,6 +321,9 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
   const lsBefore = lsCalls.length;
   await billingMod.cancelSubscription(JSON.parse(db.get('user:user_1')));
   assert(lsCalls.slice(lsBefore).some((c) => c.method === 'DELETE' && c.path === '/v1/subscriptions/903'), 'an active subscription can be cancelled at Lemon Squeezy (used when deleting the account)');
+  const goneOk = await billingMod.cancelSubscription({ billing: { subscriptionId: 'gone', status: 'active' } }).then(() => true, () => false);
+  const brokenOk = await billingMod.cancelSubscription({ billing: { subscriptionId: 'broken', status: 'active' } }).then(() => true, () => false);
+  assert(goneOk && !brokenOk, 'a subscription already gone at Lemon Squeezy counts as cancelled; a server error stops the deletion');
   wh = await sendHook({ meta: { event_name: 'subscription_expired', test_mode: true }, data: Object.assign(sub('expired', 'Agency Monthly', { test_mode: true, ends_at: iso(now - DAY), updated_at: iso(now + 60000) }), { id: '903' }) });
   assert(JSON.parse(db.get('user:user_1')).plan === 'free', 'tester test subscription expiring returns to free');
   delete process.env.BILLING_TEST_EMAILS;
@@ -449,12 +454,29 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
   const fail1 = await alertsMod.process(downSite, alertUser, Date.now());
   assert(fail1.some((x) => x.type === 'down' && x.state === 'retry') && !db.has('alert:siteZ:down'), 'a failed alert email is not marked as sent');
   resendFail = false;
-  const ok1 = await alertsMod.process(downSite, alertUser, Date.now());
-  assert(ok1.some((x) => x.type === 'down' && x.state === 'opened') && db.has('alert:siteZ:down') && emails.slice(-1)[0].subject.includes('Zed is down'), 'the alert email goes out on the next run');
+  const wait1 = await alertsMod.process(downSite, alertUser, Date.now());
+  assert(wait1.some((x) => x.type === 'down' && x.state === 'waiting') && !db.has('alert:siteZ:down'), 'after a failed email the next try waits (backoff) instead of hammering the email service');
+  const ok1 = await alertsMod.process(downSite, alertUser, Date.now() + 6 * 60000);
+  assert(ok1.some((x) => x.type === 'down' && x.state === 'opened') && db.has('alert:siteZ:down') && !db.has('alertfail:siteZ:down') && emails.slice(-1)[0].subject.includes('Zed is down'), 'the alert email goes out once the wait is over');
+  // a check result never overwrites settings the user changed meanwhile
+  const storeMod = require('../api/_lib/store');
+  db.set('site:siteT', JSON.stringify({ id: 'siteT', name: 'T', url: 'https://t.test', monitored: true, settings: { client: 'Old' }, status: { code: 200 } }));
+  const tRec = JSON.parse(db.get('site:siteT')); // what a check run read at its start
+  const changed = JSON.parse(db.get('site:siteT')); changed.monitored = false; changed.pausedByUser = true; changed.settings.client = 'Renamed Client';
+  db.set('site:siteT', JSON.stringify(changed)); // the user changes the site while the check runs
+  await storeMod.saveSiteStatus('siteT', Object.assign({}, tRec.status, { code: 299 }));
+  const merged = JSON.parse(db.get('site:siteT'));
+  assert(merged.status.code === 299 && merged.monitored === false && merged.pausedByUser === true && merged.settings.client === 'Renamed Client', 'saving a check result keeps settings changed during the check');
+  db.delete('site:siteT');
+  assert((await storeMod.saveSiteStatus('nope', {})) === null && !db.has('site:nope'), 'a check result for a removed site does not bring it back');
   // signed notices only
   const s10 = cookiesFrom(await request(port, 'GET', '/callback?code=install-code'));
   const forgedNotice = await request(port, 'GET', '/app?notice=' + encodeURIComponent('Your account is suspended, call 555'), { headers: { Cookie: s10 } });
   assert(forgedNotice.status === 200 && !forgedNotice.body.includes('suspended'), 'a notice typed into the URL is not shown');
+  const nsig = (uid, t) => crypto.createHmac('sha256', process.env.SESSION_SECRET).update('notice:' + uid + ':' + t).digest('hex').slice(0, 16);
+  const otherUser = await request(port, 'GET', '/app?notice=' + encodeURIComponent('Hello other user') + '&ns=' + nsig('user_2', 'Hello other user'), { headers: { Cookie: s10 } });
+  const ownUser = await request(port, 'GET', '/app?notice=' + encodeURIComponent('Hello own user') + '&ns=' + nsig('user_1', 'Hello own user'), { headers: { Cookie: s10 } });
+  assert(!otherUser.body.includes('Hello other user') && ownUser.body.includes('Hello own user'), 'a notice signed for another account is not shown');
   // sign in: index backfill and limits
   const uRec = JSON.parse(db.get('user:user_1'));
   db.delete('email:' + uRec.email); db.delete('migr:email-index');
@@ -471,6 +493,32 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
   assert(emails.length === mailsBefore + 1, 'another IP can still sign in');
   const longEmail = await loginFrom('198.51.100.8', 'a'.repeat(300) + '@example.com');
   assert(longEmail.status === 302 && longEmail.headers.location === '/login?bad=1', 'over-long email addresses are refused');
+  const allBefore = db.get('rl:login-all');
+  for (let i = 0; i < 5; i++) await loginFrom('198.51.100.' + (20 + i), 'junk' + i + '@example.com');
+  assert(db.get('rl:login-all') === allBefore, 'unknown addresses do not use up the shared sign in budget');
+  for (let i = 0; i < 10; i++) await loginFrom('2001:db8:aa:bb::' + (i + 1).toString(16), 'nobody' + i + '@example.com');
+  db.delete('loginrl:' + uRec.email);
+  const mails6 = emails.length;
+  await loginFrom('2001:db8:aa:bb:ffff::1', uRec.email);
+  assert(emails.length === mails6, 'IPv6 addresses in one /64 share the per-IP limit');
+  // weekly digest: one per week, with a Tuesday catch-up
+  const jobsMod = require('../api/_lib/jobs');
+  const dgMon = Date.parse('2030-01-07T08:00:00Z'), dgTue = Date.parse('2030-01-08T08:00:00Z'), dgWed = Date.parse('2030-01-09T08:00:00Z');
+  const dTue1 = await jobsMod.runDigest(dgTue);
+  const dMon = await jobsMod.runDigest(dgMon);
+  const dWed = await jobsMod.runDigest(dgWed);
+  const dMon2 = await jobsMod.runDigest(Date.parse('2030-01-14T08:00:00Z'));
+  assert(dTue1.sent === 1 && dMon.sent === 0 && dWed.skipped && dMon2.sent === 1, 'weekly digest: Tuesday catches up a missed Monday, never twice a week, next week sends again');
+
+  // manual Refresh while Webflow refuses access: the user is told, nothing is deleted on the first refusal
+  wfState.revoked = true;
+  process.env.REVOKE_CONFIRM_MS = '600000';
+  const sitesBefore = JSON.parse(db.get('user:user_1')).siteIds.length;
+  const ref = await request(port, 'POST', '/app/sync', { headers: { Cookie: s10, 'Content-Type': 'application/x-www-form-urlencoded', Origin: 'https://app.test' }, body: '' });
+  const refPage = ref.headers.location && await request(port, 'GET', ref.headers.location, { headers: { Cookie: s10 } });
+  assert(ref.status === 302 && refPage && refPage.body.includes('Webflow refused access') && JSON.parse(db.get('user:user_1')).siteIds.length === sitesBefore, 'Refresh tells the user when Webflow refuses access and keeps the data on the first refusal');
+  wfState.revoked = false;
+  process.env.REVOKE_CONFIRM_MS = '0';
 
   console.log(`\n${passed} passed, ${failed} failed`);
   [redis, siteA, siteB, resend, webflow, app].forEach((s) => s.close());

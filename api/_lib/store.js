@@ -56,13 +56,19 @@ async function findUserByEmail(email) {
   return null;
 }
 async function ensureEmailIndex() {
-  if (!(await kv.setNX('migr:email-index', { at: Date.now() }))) return 0;
-  let n = 0;
-  for (const id of await allUserIds()) {
-    const u = await getUser(id);
-    if (u && u.email) { await kv.setJSON('email:' + String(u.email).toLowerCase(), { u: u.id }); n++; }
+  if (await kv.getJSON('migr:email-index')) return 0; // done before
+  if (!(await kv.setNX('migr:email-index:run', { at: Date.now() }, 120))) return 0; // another run is on it
+  try {
+    let n = 0;
+    for (const id of await allUserIds()) {
+      const u = await getUser(id);
+      if (u && u.email) { await kv.setJSON('email:' + String(u.email).toLowerCase(), { u: u.id }); n++; }
+    }
+    await kv.setJSON('migr:email-index', { at: Date.now(), n }); // only marked done once it finished
+    return n;
+  } finally {
+    await kv.del('migr:email-index:run');
   }
-  return n;
 }
 async function createLoginToken(userId) {
   const t = random(24);
@@ -135,11 +141,24 @@ async function saveSite(site) {
   if (site.monitored) await kv.sadd('sites:all', site.id); else await kv.srem('sites:all', site.id);
   return site;
 }
-// Saves only the record (the site is already in sites:all). Used by the 5-minute checks to save commands.
-async function saveSiteRecord(site) {
-  site.updatedAt = Date.now();
-  await kv.setJSON('site:' + site.id, site);
-  return site;
+// The checks job only owns site.status. It re-reads the record and writes status onto the latest
+// version, so a pause, a new report link or a settings change made during the run is never lost.
+// Returns null when the site was removed meanwhile.
+async function saveSiteStatus(siteId, status) {
+  const fresh = await getSite(siteId);
+  if (!fresh) return null;
+  fresh.status = status;
+  fresh.updatedAt = Date.now();
+  await kv.setJSON('site:' + siteId, fresh);
+  return fresh;
+}
+// The sync job owns the Webflow data and metadata fields; same merge onto the latest record.
+const SYNC_FIELDS = ['name', 'shortName', 'domains', 'url', 'previewUrl', 'lastPublished', 'lastUpdated', 'data', 'syncedAt', 'syncError'];
+async function saveSiteSync(site) {
+  const fresh = await getSite(site.id);
+  if (!fresh) return null;
+  for (const k of SYNC_FIELDS) if (site[k] !== undefined) fresh[k] = site[k];
+  return saveSite(fresh);
 }
 async function allSiteIds() { return kv.smembers('sites:all'); }
 async function deleteSite(id) {
@@ -201,6 +220,10 @@ async function getAlerts(siteId, types) {
   const vals = await kv.mgetJSON(types.map((t) => `alert:${siteId}:${t}`));
   return Object.fromEntries(types.map((t, i) => [t, vals[i] || null]));
 }
+// Backoff for alert emails that failed: { n: attempts, until: next try }.
+async function getAlertFail(siteId, type) { return kv.getJSON(`alertfail:${siteId}:${type}`); }
+async function setAlertFail(siteId, type, state) { return kv.setJSON(`alertfail:${siteId}:${type}`, state, 86400); }
+async function clearAlertFail(siteId, type) { return kv.del(`alertfail:${siteId}:${type}`); }
 async function setAlert(siteId, type, state) { return kv.setJSON(`alert:${siteId}:${type}`, state); }
 async function clearAlert(siteId, type) { return kv.del(`alert:${siteId}:${type}`); }
 
@@ -271,7 +294,7 @@ module.exports = {
   PLAN_LIMITS, CMS_LIMITS, UPTIME_KEEP, limitFor,
   getUser, saveUser, allUserIds, newUser, addConnection, tokenOf, removeConnection,
   findUserByEmail, ensureEmailIndex, createLoginToken, peekLoginToken, consumeLoginToken, loginRateOk, rateOk,
-  getSite, getSites, saveSite, saveSiteRecord, allSiteIds, deleteSite, newSite, refreshMeta, primaryUrl,
-  pushCheck, recentChecks, getAlert, getAlerts, setAlert, clearAlert, ensureReportToken, siteIdForReport, deleteReport, deleteUser, enforceLimit,
+  getSite, getSites, saveSite, saveSiteStatus, saveSiteSync, allSiteIds, deleteSite, newSite, refreshMeta, primaryUrl,
+  pushCheck, recentChecks, getAlert, getAlerts, setAlert, clearAlert, getAlertFail, setAlertFail, clearAlertFail, ensureReportToken, siteIdForReport, deleteReport, deleteUser, enforceLimit,
   confirmRevoked, clearRevoked, digestDone, markDigestDone, lock, unlock
 };

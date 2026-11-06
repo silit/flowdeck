@@ -33,7 +33,7 @@ async function api(method, path, body) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const msg = data && data.errors && data.errors[0] ? (data.errors[0].detail || data.errors[0].title) : res.status;
-    throw new Error('Lemon Squeezy: ' + msg);
+    throw Object.assign(new Error('Lemon Squeezy: ' + msg), { status: res.status });
   }
   return data;
 }
@@ -202,7 +202,12 @@ function hasLiveSubscription(user) {
 // Cancels the subscription at Lemon Squeezy (it stays active until the end of the paid period).
 async function cancelSubscription(user) {
   if (!hasLiveSubscription(user)) return true;
-  await api('DELETE', '/v1/subscriptions/' + encodeURIComponent(user.billing.subscriptionId));
+  try {
+    await api('DELETE', '/v1/subscriptions/' + encodeURIComponent(user.billing.subscriptionId));
+  } catch (e) {
+    if (e.status === 404) return true; // already gone at Lemon Squeezy
+    throw e;
+  }
   return true;
 }
 

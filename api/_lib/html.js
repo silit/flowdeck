@@ -315,7 +315,7 @@ ${notice ? `<div class="notice">${notice}</div>` : ''}
 <div class="actions"><button class="btn primary" type="submit">Save</button></div>
 </form></div>
 ${planPanel(user, sites, limit, opts || {})}
-<div class="panel"><h3>Webflow connections</h3><p class="muted small" style="margin:6px 0 10px">Each connection is one Webflow authorization. Disconnect revokes Flowdeck's access in Webflow and deletes the stored token and that connection's sites from Flowdeck. Uninstalling the app in Webflow has the same effect within 15 minutes.</p>
+<div class="panel"><h3>Webflow connections</h3><p class="muted small" style="margin:6px 0 10px">Each connection is one Webflow authorization. Disconnect revokes Flowdeck's access in Webflow and deletes the stored token and that connection's sites from Flowdeck. Uninstalling the app in Webflow has the same effect, usually within an hour.</p>
 <ul class="issues plans">${user.connections.map((c) => `<li><span>${esc(c.label || 'Connection')} <span class="muted">authorized ${new Date(c.authorizedAt).toISOString().slice(0, 10)}, ${sites.filter((s) => s.connectionId === c.id).length} sites</span></span><form method="post" action="/app/connection/remove"><input type="hidden" name="id" value="${esc(c.id)}"><button class="btn sm" type="submit">Disconnect</button></form></li>`).join('') || '<li class="muted">None yet</li>'}</ul>
 <div class="actions" style="margin-top:10px"><a class="btn" href="/auth">Connect more sites</a></div></div>
 <div class="panel"><h3>Delete account</h3><p class="muted small" style="margin:6px 0 10px">Revokes every Webflow authorization and removes your sites, checks and tokens from Flowdeck. Your Webflow sites are not affected.</p>

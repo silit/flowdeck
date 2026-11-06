@@ -71,11 +71,12 @@ async function runChecks(now) {
         }
       }
       checks.addDaily(st, c);
-      site.status = st;
       await store.pushCheck(site.id, { t: c.t, ok: c.ok, code: c.code, ms: c.ms });
-      await store.saveSiteRecord(site);
+      // Write only the status onto the latest record (the user may have changed the site meanwhile)
+      const fresh = await store.saveSiteStatus(site.id, st);
+      if (!fresh) return { id: site.id, skipped: 'removed' };
       if (!users[site.userId]) users[site.userId] = await store.getUser(site.userId);
-      const fired = await alerts.process(site, users[site.userId], now);
+      const fired = fresh.monitored ? await alerts.process(fresh, users[site.userId], now) : [];
       return { id: site.id, ok: c.ok, code: c.code, ms: c.ms, alerts: fired };
     });
     return { checked: results.length, results };
@@ -98,13 +99,12 @@ async function runSync(now, batch) {
       const conn = user && user.connections.find((c) => c.id === site.connectionId);
       const token = conn && store.tokenOf(conn);
       if (!token) {
-        // Removed earlier in this run (its connection was revoked): do not write it back.
-        if (!(await store.getSite(site.id))) { results.push({ id: site.id, gone: true }); continue; }
         // Move it to the back of the queue so sites without access never block the others.
+        // (saveSiteSync does nothing if the site was removed earlier in this run.)
         site.syncedAt = now;
         site.syncError = 'No Webflow access for this site. Connect Webflow again in Settings.';
-        await store.saveSite(site);
-        results.push({ id: site.id, error: 'no token' });
+        const kept = await store.saveSiteSync(site);
+        results.push({ id: site.id, error: kept ? 'no token' : 'removed' });
         continue;
       }
       const before = site.data && site.data.forms ? site.data.forms : null;
@@ -114,7 +114,7 @@ async function runSync(now, batch) {
         if (!wf.isRevoked(e)) {
           site.syncedAt = now;
           site.syncError = 'sync: ' + e.message;
-          await store.saveSite(site);
+          await store.saveSiteSync(site);
           results.push({ id: site.id, error: e.message });
           continue;
         }
@@ -127,9 +127,9 @@ async function runSync(now, batch) {
           await store.saveUser(user);
           results.push({ id: site.id, revoked: true });
         } else {
-          site.syncedAt = now;
+          // Keep its place at the front of the queue so the next run confirms it.
           site.syncError = 'Webflow refused access. Checking again shortly.';
-          await store.saveSite(site);
+          await store.saveSiteSync(site);
           results.push({ id: site.id, revokedPending: true });
         }
         continue;
@@ -139,8 +139,9 @@ async function runSync(now, batch) {
       if (site.data && site.data.forms) {
         site.data.forms.before30 = before ? Math.max(before.total30 || 0, before.before30 || 0) : 0;
       }
-      await store.saveSite(site);
-      await alerts.process(site, user, now);
+      const saved = await store.saveSiteSync(site);
+      if (!saved) { results.push({ id: site.id, error: 'removed' }); continue; }
+      if (saved.monitored) await alerts.process(saved, user, now);
       results.push({ id: site.id, errors: site.data ? site.data.errors : [] });
     }
     return { synced: results.length, results };
@@ -168,13 +169,15 @@ function digestHtml(user, sites, now) {
 <p style="margin-top:18px"><a href="${appUrl()}/app">Open Flowdeck</a></p></div>`;
 }
 
-// Progress is kept per user, so a timeout or an error never skips the rest of the users for a week:
-// any later run on the same day (the digest cron can safely run hourly) continues where it stopped.
+// Progress is kept per user and per week, so a timeout or an error never skips anyone: a later run
+// on Monday, or the catch-up run on Tuesday, continues where it stopped (the cron can run hourly).
 async function runDigest(now, force) {
   now = now || Date.now();
   const d = new Date(now);
-  if (!force && d.getUTCDay() !== 1) return { skipped: 'not monday' };
-  const day = d.toISOString().slice(0, 10);
+  const wd = d.getUTCDay();
+  if (!force && wd !== 1 && wd !== 2) return { skipped: 'not monday' };
+  const monday = new Date(now - ((wd + 6) % 7) * DAY);
+  const day = monday.toISOString().slice(0, 10); // the week's Monday
   if (!(await store.lock('digest', 300))) return { skipped: 'locked' };
   const started = Date.now();
   let sent = 0, pending = 0, failed = 0;

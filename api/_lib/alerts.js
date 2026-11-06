@@ -56,19 +56,27 @@ async function processSite(site, user, now) {
     const state = states[type];
     const active = !!found[type];
     if (active && !state) {
+      const t = now || Date.now();
+      let fail = null;
       if (to) {
+        fail = await store.getAlertFail(site.id, type);
+        if (fail && fail.until > t) { sent.push({ type, state: 'waiting' }); continue; }
         const subject = rule.title(site, found[type]);
         const body = rule.body(site, found[type]);
         try {
           await email.send({ to, subject: '[Flowdeck] ' + subject, text: body + '\n\nOpen Flowdeck: ' + appUrl() + '/app/site?id=' + site.id, html: `<p>${esc(body)}</p><p><a href="${appUrl()}/app/site?id=${site.id}">Open in Flowdeck</a></p>` });
         } catch (e) {
-          // Not recorded as sent: the next run tries again, so a failed email never hides an outage.
+          // Not recorded as sent, so a failed email never hides an outage. Retries back off:
+          // 5, 10, 20, 40 minutes ... up to every 6 hours.
           console.error('[alert email]', e.message);
+          const n = (fail ? fail.n : 0) + 1;
+          await store.setAlertFail(site.id, type, { n, until: t + Math.min(6 * 3600000, 300000 * Math.pow(2, n - 1)), error: String(e.message).slice(0, 120) });
           sent.push({ type, state: 'retry' });
           continue;
         }
       }
-      await store.setAlert(site.id, type, { since: now || Date.now(), detail: found[type] });
+      await store.setAlert(site.id, type, { since: t, detail: found[type] });
+      if (fail) await store.clearAlertFail(site.id, type);
       sent.push({ type, state: 'opened' });
     } else if (!active && state) {
       await store.clearAlert(site.id, type);
