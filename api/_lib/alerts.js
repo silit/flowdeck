@@ -44,25 +44,47 @@ function evaluate(site, now) {
   return found;
 }
 
-async function processSite(site, user, now) {
+// `types` limits which rules this run owns: the checks job evaluates down and ssl (data it just
+// measured), the sync job unpublished and forms_silent, so neither can close the other's alert
+// from a stale copy of the site.
+async function processSite(site, user, now, types) {
   if (!site.settings || site.settings.alerts === false) return [];
   if (!user || !user.settings || user.settings.alerts === false) return [];
   const to = (user.settings.alertEmail || user.email || '').trim();
   const found = evaluate(site, now);
   const sent = [];
-  for (const type of Object.keys(RULES)) {
+  const own = (types || Object.keys(RULES)).filter((t) => RULES[t]);
+  const { states, fails } = await store.getAlertStates(site.id, own); // one read for all rules
+  for (const type of own) {
     const rule = RULES[type];
-    const state = await store.getAlert(site.id, type);
+    const state = states[type];
     const active = !!found[type];
+    const fail = fails[type];
+    if (!active && fail) await store.clearAlertFail(site.id, type); // problem over: forget old failures
     if (active && !state) {
-      await store.setAlert(site.id, type, { since: now || Date.now(), detail: found[type] });
+      const t = now || Date.now();
       if (to) {
+        if (fail && fail.until > t) { sent.push({ type, state: 'waiting' }); continue; }
         const subject = rule.title(site, found[type]);
         const body = rule.body(site, found[type]);
         try {
           await email.send({ to, subject: '[Flowdeck] ' + subject, text: body + '\n\nOpen Flowdeck: ' + appUrl() + '/app/site?id=' + site.id, html: `<p>${esc(body)}</p><p><a href="${appUrl()}/app/site?id=${site.id}">Open in Flowdeck</a></p>` });
-        } catch (e) { console.error('[alert email]', e.message); }
+        } catch (e) {
+          // Not recorded as sent, so a failed email never hides an outage. A temporary problem
+          // (rate limit, server error, network) is retried on the next run; an email the service
+          // refuses (bad address, unverified sender) backs off: 5, 10, 20 minutes ... up to 6 hours.
+          console.error('[alert email]', e.message);
+          const lasting = e.status >= 400 && e.status < 500 && e.status !== 429;
+          if (lasting) {
+            const n = (fail ? fail.n : 0) + 1;
+            await store.setAlertFail(site.id, type, { n, until: t + Math.min(6 * 3600000, 300000 * Math.pow(2, n - 1)), error: String(e.message).slice(0, 120) });
+          }
+          sent.push({ type, state: 'retry' });
+          continue;
+        }
       }
+      await store.setAlert(site.id, type, { since: t, detail: found[type] });
+      if (fail) await store.clearAlertFail(site.id, type);
       sent.push({ type, state: 'opened' });
     } else if (!active && state) {
       await store.clearAlert(site.id, type);

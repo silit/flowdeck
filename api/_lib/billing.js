@@ -33,7 +33,7 @@ async function api(method, path, body) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const msg = data && data.errors && data.errors[0] ? (data.errors[0].detail || data.errors[0].title) : res.status;
-    throw new Error('Lemon Squeezy: ' + msg);
+    throw Object.assign(new Error('Lemon Squeezy: ' + msg), { status: res.status });
   }
   return data;
 }
@@ -76,8 +76,8 @@ async function variants() {
 function isTester(user) {
   const list = String(process.env.BILLING_TEST_EMAILS || '').toLowerCase().split(',').map((x) => x.trim()).filter(Boolean);
   if (!list.length || !user) return false;
-  const own = [user.email, user.settings && user.settings.alertEmail].filter(Boolean).map((e) => String(e).trim().toLowerCase());
-  return own.some((e) => list.includes(e));
+  // Only the account email, which comes from Webflow. The alert email is user-editable and unverified.
+  return list.includes(String(user.email || '').trim().toLowerCase());
 }
 
 // 'live' when real plans can be sold, 'test' when only test-mode variants exist, 'off' otherwise.
@@ -140,6 +140,7 @@ function apply(user, sub) {
   const endsAt = a.ends_at ? Date.parse(a.ends_at) : null;
   const stillPaid = ACTIVE.includes(a.status) || (a.status === 'cancelled' && endsAt && endsAt > Date.now());
   user.billing = {
+    lsUpdatedAt: a.updated_at || null,
     subscriptionId: String(sub.id),
     status: a.status || '',
     plan: m ? m.plan : '',
@@ -178,11 +179,36 @@ async function handleWebhook(raw, signature, deps) {
   if (user.billing && user.billing.subscriptionId && user.billing.subscriptionId !== String(data.id) && ACTIVE.includes(user.billing.status) && !ACTIVE.includes((data.attributes || {}).status)) {
     return { status: 200, body: { ignored: 'other subscription active' } };
   }
+  // Webhooks can arrive late or out of order: never let an older event overwrite a newer one
+  const b = user.billing || {};
+  const incoming = Date.parse((data.attributes || {}).updated_at || '') || 0;
+  const stored = Date.parse(b.lsUpdatedAt || '') || 0;
+  if (b.subscriptionId === String(data.id) && incoming && stored && incoming < stored) return { status: 200, body: { ignored: 'stale event' } };
   await kv.setJSON('lssub:' + data.id, { userId });
   apply(user, data);
   await deps.saveUser(user);
   if (deps.enforce) await deps.enforce(user);
   return { status: 200, body: { ok: true, plan: user.plan } };
+}
+
+// True while the user still has a subscription that will charge or is paid up.
+function hasLiveSubscription(user) {
+  const b = user && user.billing;
+  if (!b || !b.subscriptionId) return false;
+  if (ACTIVE.includes(b.status)) return true;
+  return false;
+}
+
+// Cancels the subscription at Lemon Squeezy (it stays active until the end of the paid period).
+async function cancelSubscription(user) {
+  if (!hasLiveSubscription(user)) return true;
+  try {
+    await api('DELETE', '/v1/subscriptions/' + encodeURIComponent(user.billing.subscriptionId));
+  } catch (e) {
+    if (e.status === 404) return true; // already gone at Lemon Squeezy
+    throw e;
+  }
+  return true;
 }
 
 // Fresh customer portal link (signed links expire after 24 hours).
@@ -194,4 +220,4 @@ async function portalUrl(user) {
   } catch (e) { return user.billing.portalUrl || ''; }
 }
 
-module.exports = { PLANS, enabled, mode, canCheckout, isTester, planFromNames, checkoutUrl, verify, apply, handleWebhook, portalUrl, sign, _reset: () => { variantCache = null; } };
+module.exports = { PLANS, enabled, mode, canCheckout, isTester, hasLiveSubscription, cancelSubscription, planFromNames, checkoutUrl, verify, apply, handleWebhook, portalUrl, sign, _reset: () => { variantCache = null; } };

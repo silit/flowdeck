@@ -15,6 +15,8 @@ const { seal, open, random, timingEqual } = require('./_lib/crypto');
 const { syncSite } = require('./_lib/sync');
 const billing = require('./_lib/billing');
 const email = require('./_lib/email');
+const crypto = require('crypto');
+const net = require('net');
 
 const ENV = () => ({
   clientId: process.env.WEBFLOW_CLIENT_ID || '',
@@ -74,6 +76,20 @@ function queryOf(req) {
   delete q.path;
   return q;
 }
+// Notices passed in a redirect URL are signed for the user they were made for, so nobody can put
+// their own text on our pages or send a crafted notice link to someone else.
+function noticeSig(userId, t) {
+  return crypto.createHmac('sha256', process.env.SESSION_SECRET || 'flowdeck').update('notice:' + userId + ':' + t).digest('hex').slice(0, 16);
+}
+function noticeQuery(user, text) {
+  const t = String(text || '').slice(0, 300);
+  return 'notice=' + encodeURIComponent(t) + '&ns=' + noticeSig(user.id, t);
+}
+function noticeFrom(q, user) {
+  if (!q.notice || !q.ns || !user) return '';
+  const t = String(q.notice);
+  return timingEqual(String(q.ns), noticeSig(user.id, t)) ? t : '';
+}
 function sameOrigin(req) {
   const origin = req.headers.origin || req.headers.referer || '';
   if (!origin) return true; // older browsers; cookie is SameSite=Lax anyway
@@ -107,7 +123,7 @@ async function handleCallback(req, res) {
   const q = queryOf(req);
   const c = parseCookies(req);
   if (q.error) {
-    const why = q.error === 'access_denied' ? 'You cancelled on the Webflow screen, so Flowdeck has no access to your sites and nothing was stored.' : String(q.error_description || q.error);
+    const why = q.error === 'access_denied' ? 'You cancelled on the Webflow screen, so Flowdeck has no access to your sites and nothing was stored.' : 'Webflow returned "' + String(q.error).replace(/[^a-z_]/gi, '').slice(0, 40) + '".';
     return send(res, 400, html.errorPage('Authorization cancelled', why + ' You can connect any time from the home page.', '/'));
   }
   if (!q.code) return send(res, 400, html.errorPage('Missing code', 'Webflow did not return an authorization code.', '/'));
@@ -172,7 +188,7 @@ async function handleCallback(req, res) {
       await syncSite(site, token, { pages: 100, collections: 10, submissions: 100 });
       const url = checks.checkUrlOf(site);
       if (url && Date.now() - started < BUDGET_MS) {
-        const chk = await checks.httpCheck(url, 5000);
+        const chk = await checks.httpCheck(url, 5000, checks.siteHosts(site));
         site.status = Object.assign(site.status || {}, { lastCheckAt: chk.t, code: chk.code, ms: chk.ms, up: chk.ok ? true : null, fails: chk.ok ? 0 : 1, since: chk.t, error: chk.error || '' });
         await store.pushCheck(site.id, { t: chk.t, ok: chk.ok, code: chk.code, ms: chk.ms });
         const host = url.startsWith('https://') ? checks.hostOf(url) : '';
@@ -186,7 +202,7 @@ async function handleCallback(req, res) {
   }
 
   res.setHeader('Set-Cookie', [sessionCookie(user.id), cookie('fd_state', '', 0)]);
-  redirect(res, '/app' + (notices.length ? '?notice=' + encodeURIComponent(notices.join(' ')) : (added ? '?added=' + added : '')));
+  redirect(res, '/app' + (notices.length ? '?' + noticeQuery(user, notices.join(' ')) : (added ? '?added=' + added : '')));
 }
 
 /* ---------- app pages ---------- */
@@ -197,8 +213,9 @@ async function handleApp(req, res, user) {
   const sites = await store.getSites(user.siteIds || []);
   const checksBySite = {};
   for (const s of sites) checksBySite[s.id] = await store.recentChecks(s.id);
-  let notice = q.notice ? html.esc(q.notice) : '';
-  if (q.added) notice = `${html.esc(q.added)} site${q.added === '1' ? '' : 's'} connected. First data is loading; uptime starts within 5 minutes.`;
+  let notice = html.esc(noticeFrom(q, user));
+  const added = parseInt(q.added, 10);
+  if (added > 0) notice = `${added} site${added === 1 ? '' : 's'} connected. First data is loading; uptime starts within 5 minutes.`;
   if (q.synced) notice = 'Data refreshed from Webflow.';
   // A one-time message from the server (for example: access was revoked in Webflow) wins.
   if (user.notice) { notice = html.esc(user.notice); delete user.notice; await store.saveUser(user); }
@@ -209,6 +226,8 @@ async function handleSync(req, res, user) {
   const b = await readBody(req);
   const one = b.id ? await ownedSite(user, String(b.id)) : null;
   const sites = one ? [one] : (await store.getSites(user.siteIds || [])).filter((s) => s.monitored).sort((a, b) => (a.syncedAt || 0) - (b.syncedAt || 0)).slice(0, 10);
+  let refused = 0, siteOnly = 0, unclear = 0;
+  const tokenState = {};
   for (const site of sites) {
     const conn = user.connections.find((c) => c.id === site.connectionId);
     const token = conn && store.tokenOf(conn);
@@ -217,17 +236,30 @@ async function handleSync(req, res, user) {
     try {
       await syncSite(site, token, { pages: 300, collections: 20, submissions: 300 });
       if (site.data && site.data.forms) site.data.forms.before30 = before ? Math.max(before.total30 || 0, before.before30 || 0) : 0;
-      await store.saveSite(site);
+      await store.saveSiteSync(site);
+      if (store.clearRevoked(user, site.connectionId)) await store.saveUser(user);
     } catch (e) {
       if (wf.isRevoked(e)) {
-        const removed = await store.removeConnection(user, site.connectionId);
-        if (removed) user.notice = revokedNotice(removed);
-        await store.saveUser(user);
+        // Is the whole authorization gone, or only this site? (asked once per connection)
+        if (!tokenState[site.connectionId]) {
+          tokenState[site.connectionId] = await wf.tokenStatus(token);
+          if (tokenState[site.connectionId] === 'ok' && store.clearRevoked(user, site.connectionId)) await store.saveUser(user);
+        }
+        if (tokenState[site.connectionId] === 'ok') { siteOnly++; continue; }
+        if (tokenState[site.connectionId] === 'unknown') { unclear++; continue; }
+        refused++;
+        const removed = await store.confirmRevoked(user, site.connectionId, Date.now());
+        if (removed) { user.notice = revokedNotice(removed); await store.saveUser(user); }
       }
     }
   }
-  if (one && (user.siteIds || []).includes(one.id)) return redirect(res, '/app/site?id=' + encodeURIComponent(one.id) + '&synced=1');
-  redirect(res, '/app?synced=1');
+  if (user.notice) return redirect(res, '/app');
+  const n = (k) => (k === 1 ? 'one site' : k + ' sites');
+  const msg = refused ? noticeQuery(user, 'Webflow refused access for ' + n(refused) + '. If you uninstalled Flowdeck in Webflow, its data will be deleted shortly; otherwise try Refresh again in a few minutes.')
+    : siteOnly ? noticeQuery(user, 'Webflow refused access to ' + n(siteOnly) + ' while your connection still works. Check that ' + (siteOnly === 1 ? 'the site is' : 'those sites are') + ' still in a workspace you authorized for Flowdeck, or connect again.')
+    : unclear ? noticeQuery(user, 'Webflow refused access to ' + n(unclear) + ' and did not answer clearly. Try Refresh again in a few minutes.') : '';
+  if (one && (user.siteIds || []).includes(one.id)) return redirect(res, '/app/site?id=' + encodeURIComponent(one.id) + '&' + (msg || 'synced=1'));
+  redirect(res, '/app?' + (msg || 'synced=1'));
 }
 
 async function ownedSite(user, id) {
@@ -241,7 +273,7 @@ async function handleSitePage(req, res, user) {
   const site = await ownedSite(user, q.id);
   if (!site) return send(res, 404, html.errorPage('Site not found', 'That site is not connected to your account.'));
   const recent = await store.recentChecks(site.id);
-  const notice = q.full ? `Your plan monitors up to ${user._limit} site${user._limit === 1 ? '' : 's'}. Pause another site or <a href="/app/settings#plan">upgrade</a>.` : (q.saved ? 'Settings saved.' : (q.synced ? 'Data refreshed from Webflow.' : ''));
+  const notice = q.full ? `Your plan monitors up to ${user._limit} site${user._limit === 1 ? '' : 's'}. Pause another site or <a href="/app/settings#plan">upgrade</a>.` : (q.saved ? 'Settings saved.' : (q.synced ? 'Data refreshed from Webflow.' : html.esc(noticeFrom(q, user))));
   send(res, 200, html.siteDetail(user, site, recent, Date.now(), notice));
 }
 
@@ -252,7 +284,7 @@ async function handleSiteSettings(req, res, user) {
   site.settings.client = String(b.client || '').trim().slice(0, 80);
   site.settings.plan = ['unknown', 'basic', 'cms', 'business', 'enterprise'].includes(b.plan) ? b.plan : 'unknown';
   const url = String(b.checkUrl || '').trim();
-  if (url && !checks.allowedCheckUrl(site, url)) {
+  if (url && (url.length > 2048 || !checks.allowedCheckUrl(site, url))) {
     return send(res, 400, html.errorPage('URL not allowed', 'The URL to check must be an https address on one of this site\'s own domains: ' + checks.siteHosts(site).join(', ') + '.', '/app/site?id=' + encodeURIComponent(site.id)));
   }
   site.settings.checkUrl = url;
@@ -316,20 +348,20 @@ async function handleSiteRemove(req, res, user) {
   await store.deleteSite(site.id);
   user.siteIds = user.siteIds.filter((id) => id !== site.id);
   await store.saveUser(user);
-  redirect(res, '/app?notice=' + encodeURIComponent(site.name + ' removed.'));
+  redirect(res, '/app?' + noticeQuery(user, site.name + ' removed.'));
 }
 
 async function handleSettingsPage(req, res, user) {
   const q = queryOf(req);
   const sites = await store.getSites(user.siteIds || []);
-  const notice = q.upgraded ? 'Thanks! Your plan updates as soon as the payment is confirmed, usually within a minute.' : (q.saved ? 'Settings saved.' : (q.notice ? html.esc(q.notice) : ''));
+  const notice = q.upgraded ? 'Thanks! Your plan updates as soon as the payment is confirmed, usually within a minute.' : (q.saved ? 'Settings saved.' : html.esc(noticeFrom(q, user)));
   send(res, 200, html.settings(user, sites, notice, { billing: await billing.canCheckout(user) }));
 }
 
 async function handleSettingsSave(req, res, user) {
   const b = await readBody(req);
   const email = String(b.alertEmail || '').trim().toLowerCase();
-  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return send(res, 400, html.errorPage('Check the email', 'That email address does not look right.', '/app/settings'));
+  if (email && (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) return send(res, 400, html.errorPage('Check the email', 'That email address does not look right.', '/app/settings'));
   user.settings.alertEmail = email;
   user.settings.brand = String(b.brand || '').trim().slice(0, 80);
   user.settings.alerts = b.alerts === '1' || b.alerts === 'on';
@@ -340,6 +372,14 @@ async function handleSettingsSave(req, res, user) {
 
 async function handleDelete(req, res, user) {
   const env = ENV();
+  // A paid subscription must not keep charging after the account is gone
+  if (billing.hasLiveSubscription(user)) {
+    try { await billing.cancelSubscription(user); }
+    catch (e) {
+      console.error('[billing] cancel on delete failed', e.message);
+      return send(res, 502, html.errorPage('Cancel your plan first', 'We could not cancel your subscription automatically. Use Manage billing in Settings to cancel it, then delete your account.', '/app/settings#plan'));
+    }
+  }
   for (const c of user.connections || []) await wf.revokeToken({ clientId: env.clientId, clientSecret: env.clientSecret, token: store.tokenOf(c) });
   for (const id of user.siteIds || []) {
     const site = await store.getSite(id);
@@ -367,7 +407,7 @@ async function handleDisconnect(req, res, user) {
   await wf.revokeToken({ clientId: env.clientId, clientSecret: env.clientSecret, token: store.tokenOf(removed) });
   await store.saveUser(user);
   const n = removed._sites.length;
-  redirect(res, '/app/settings?notice=' + encodeURIComponent(`Disconnected ${removed.label || 'Webflow'}: access revoked, token and ${n} site${n === 1 ? '' : 's'} deleted.`));
+  redirect(res, '/app/settings?' + noticeQuery(user, `Disconnected ${removed.label || 'Webflow'}: access revoked, token and ${n} site${n === 1 ? '' : 's'} deleted.`));
 }
 
 /* ---------- sign in by email link (returning users) ---------- */
@@ -377,13 +417,28 @@ async function handleLoginPage(req, res) {
   send(res, 200, html.loginPage(queryOf(req)));
 }
 
+function clientIp(req) {
+  const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  const ip = fwd || String(req.headers['x-real-ip'] || '') || (req.socket && req.socket.remoteAddress) || 'unknown';
+  // One IPv6 user usually holds a whole /64, so count the /64 as one address
+  if (!net.isIPv6(ip)) return ip;
+  if (/^::ffff:/i.test(ip) && net.isIPv4(ip.slice(7))) return ip.slice(7);
+  const [head, tail] = ip.toLowerCase().split('::');
+  const h = head ? head.split(':') : [];
+  const t = tail !== undefined && tail ? tail.split(':') : [];
+  const groups = tail !== undefined ? [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill('0'), ...t] : h;
+  return groups.slice(0, 4).map((g) => parseInt(g, 16).toString(16)).join(':') + '::/64';
+}
+
 async function handleLoginPost(req, res) {
   const b = await readBody(req);
   const addr = String(b.email || '').trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) return redirect(res, '/login?bad=1');
-  if (await store.loginRateOk(addr)) {
+  if (addr.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) return redirect(res, '/login?bad=1');
+  // Limits: 10 requests per IP per 10 minutes; for real accounts, one link per address per minute and
+  // 300 links an hour in total. Unknown addresses never use up the shared budget.
+  if (await store.rateOk('login-ip:' + clientIp(req), 10, 600)) {
     const user = await store.findUserByEmail(addr);
-    if (user) {
+    if (user && (await store.loginRateOk(addr)) && (await store.rateOk('login-all', 300, 3600))) {
       const t = await store.createLoginToken(user.id);
       const link = ENV().appUrl + '/l/' + t;
       try {

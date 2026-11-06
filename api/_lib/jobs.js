@@ -27,17 +27,27 @@ async function mapLimit(items, limit, fn) {
 const checkUrlOf = (site) => checks.checkUrlOf(site);
 const wf = require('./webflow');
 
+// Each run stops starting new work after this long, well inside the 60-second function limit.
+// Sites checked longest ago go first, so anything left over is first in line next time.
+const BUDGET_MS = 40000;
+let emailIndexChecked = false; // once per warm instance is enough
+
 async function runChecks(now) {
   now = now || Date.now();
+  const started = Date.now();
   if (!(await store.lock('checks', 240))) return { skipped: 'locked' };
   try {
+    if (!emailIndexChecked) {
+      try { if ((await store.ensureEmailIndex()) >= 0) emailIndexChecked = true; } catch (e) { console.error('[email index]', e.message); }
+    }
     const ids = await store.allSiteIds();
-    const sites = await store.getSites(ids);
+    const sites = (await store.getSites(ids)).sort((a, b) => ((a.status && a.status.lastCheckAt) || 0) - ((b.status && b.status.lastCheckAt) || 0));
     const users = {};
     const results = await mapLimit(sites, 8, async (site) => {
+      if (Date.now() - started > BUDGET_MS) return { id: site.id, skipped: 'time' };
       const url = checkUrlOf(site);
       if (!url) return { id: site.id, skipped: 'no url' };
-      const c = await checks.httpCheck(url, 10000);
+      const c = await checks.httpCheck(url, 10000, checks.siteHosts(site));
       const st = site.status || {};
       st.lastCheckAt = c.t;
       st.code = c.code;
@@ -60,11 +70,13 @@ async function runChecks(now) {
           st.sslError = s.error || '';
         }
       }
-      site.status = st;
+      checks.addDaily(st, c);
+      // Write only the status onto the latest record (the user may have changed the site meanwhile)
+      const fresh = await store.saveSiteStatus(site.id, st);
+      if (!fresh) return { id: site.id, skipped: 'removed' };
       await store.pushCheck(site.id, { t: c.t, ok: c.ok, code: c.code, ms: c.ms });
-      await store.saveSite(site);
       if (!users[site.userId]) users[site.userId] = await store.getUser(site.userId);
-      const fired = await alerts.process(site, users[site.userId], now);
+      const fired = fresh.monitored ? await alerts.process(fresh, users[site.userId], now, ['down', 'ssl']) : [];
       return { id: site.id, ok: c.ok, code: c.code, ms: c.ms, alerts: fired };
     });
     return { checked: results.length, results };
@@ -80,32 +92,67 @@ async function runSync(now, batch) {
     const ids = await store.allSiteIds();
     const sites = (await store.getSites(ids)).sort((a, b) => (a.syncedAt || 0) - (b.syncedAt || 0)).slice(0, batch || 8);
     const results = [];
+    const started = Date.now();
     for (const site of sites) {
+      if (Date.now() - started > BUDGET_MS) break;
       const user = await store.getUser(site.userId);
       const conn = user && user.connections.find((c) => c.id === site.connectionId);
       const token = conn && store.tokenOf(conn);
-      if (!token) { results.push({ id: site.id, error: 'no token' }); continue; }
+      if (!token) {
+        // Move it to the back of the queue so sites without access never block the others.
+        // (saveSiteSync does nothing if the site was removed earlier in this run.)
+        site.syncedAt = now;
+        site.syncError = 'No Webflow access for this site. Connect Webflow again in Settings.';
+        const kept = await store.saveSiteSync(site);
+        results.push({ id: site.id, error: kept ? 'no token' : 'removed' });
+        continue;
+      }
       const before = site.data && site.data.forms ? site.data.forms : null;
       try {
         await syncSite(site, token);
       } catch (e) {
-        if (!wf.isRevoked(e)) throw e;
-        // App uninstalled or access revoked in Webflow: delete the token and its sites, stop calling the API.
-        const removed = await store.removeConnection(user, site.connectionId);
+        if (!wf.isRevoked(e)) {
+          site.syncedAt = now;
+          site.syncError = 'sync: ' + e.message;
+          await store.saveSiteSync(site);
+          results.push({ id: site.id, error: e.message });
+          continue;
+        }
+        // A 401 for this site. Ask Webflow whether the token itself still works: if it does, only
+        // this site is refused (e.g. moved to another workspace) and nothing is deleted.
+        const ts = await wf.tokenStatus(token);
+        if (ts !== 'revoked') {
+          if (ts === 'ok' && store.clearRevoked(user, site.connectionId)) await store.saveUser(user);
+          site.syncedAt = now;
+          site.syncError = ts === 'ok' ? 'Webflow refused access to this site. Check that it is still in a workspace you authorized for Flowdeck, or connect again.' : 'Webflow refused access. Checking again later.';
+          await store.saveSiteSync(site);
+          results.push({ id: site.id, error: 'site refused' });
+          continue;
+        }
+        // App uninstalled or access revoked in Webflow: after a second refusal at least 10 minutes
+        // later, delete the token and its sites and stop calling the API.
+        const removed = await store.confirmRevoked(user, site.connectionId, now);
         if (removed) {
           const n = removed._sites.length;
           user.notice = `Webflow access for ${removed.label || 'one connection'} was removed (the app was uninstalled or access was revoked in Webflow). Flowdeck deleted the stored token and its ${n} site${n === 1 ? '' : 's'}. Connect again to bring them back.`;
           await store.saveUser(user);
+          results.push({ id: site.id, revoked: true });
+        } else {
+          site.syncedAt = now; // back of the queue, so the other sites keep syncing meanwhile
+          site.syncError = 'Webflow refused access. Checking again shortly.';
+          await store.saveSiteSync(site);
+          results.push({ id: site.id, revokedPending: true });
         }
-        results.push({ id: site.id, revoked: true });
         continue;
       }
+      if (store.clearRevoked(user, site.connectionId)) await store.saveUser(user);
       // Remember the previous 30-day count so the "forms went silent" rule has a baseline.
       if (site.data && site.data.forms) {
         site.data.forms.before30 = before ? Math.max(before.total30 || 0, before.before30 || 0) : 0;
       }
-      await store.saveSite(site);
-      await alerts.process(site, user, now);
+      const saved = await store.saveSiteSync(site);
+      if (!saved) { results.push({ id: site.id, error: 'removed' }); continue; }
+      if (saved.monitored) await alerts.process(saved, user, now, ['unpublished', 'forms_silent']);
       results.push({ id: site.id, errors: site.data ? site.data.errors : [] });
     }
     return { synced: results.length, results };
@@ -133,27 +180,38 @@ function digestHtml(user, sites, now) {
 <p style="margin-top:18px"><a href="${appUrl()}/app">Open Flowdeck</a></p></div>`;
 }
 
+// Progress is kept per user and per week, so a timeout or an error never skips anyone: a later run
+// on Monday, or the catch-up run on Tuesday, continues where it stopped (the cron can run hourly).
 async function runDigest(now, force) {
   now = now || Date.now();
   const d = new Date(now);
-  if (!force && d.getUTCDay() !== 1) return { skipped: 'not monday' };
-  if (!(await store.lock('digest:' + d.toISOString().slice(0, 10), 86400))) return { skipped: 'already sent today' };
-  const userIds = await store.allUserIds();
-  let sent = 0;
-  for (const uid of userIds) {
-    const user = await store.getUser(uid);
-    if (!user || user.settings.digest === false) continue;
-    const to = (user.settings.alertEmail || user.email || '').trim();
-    if (!to) continue;
-    const sites = (await store.getSites(user.siteIds || [])).filter((s) => s.monitored);
-    if (!sites.length) continue;
-    for (const s of sites) s._checks = await store.recentChecks(s.id);
-    try {
-      await email.send({ to, subject: `[Flowdeck] Weekly report: ${sites.length} site${sites.length === 1 ? '' : 's'}`, html: digestHtml(user, sites, now), text: sites.map((s) => s.name + ': ' + (s.status && s.status.up === false ? 'DOWN' : 'ok')).join('\n') });
-      sent++;
-    } catch (e) { console.error('[digest]', e.message); }
+  const wd = d.getUTCDay();
+  if (!force && wd !== 1 && wd !== 2) return { skipped: 'not monday' };
+  const monday = new Date(now - ((wd + 6) % 7) * DAY);
+  const day = monday.toISOString().slice(0, 10); // the week's Monday
+  if (await store.legacyDigestDone(day)) return { skipped: 'already sent' };
+  if (!(await store.lock('digest', 300))) return { skipped: 'locked' };
+  const started = Date.now();
+  let sent = 0, pending = 0, failed = 0;
+  try {
+    for (const uid of await store.allUserIds()) {
+      if (Date.now() - started > BUDGET_MS) { pending++; continue; }
+      if (await store.digestDone(day, uid)) continue;
+      const user = await store.getUser(uid);
+      const to = user ? (user.settings.alertEmail || user.email || '').trim() : '';
+      const sites = user && user.settings.digest !== false && to ? (await store.getSites(user.siteIds || [])).filter((s) => s.monitored) : [];
+      if (!sites.length) { await store.markDigestDone(day, uid); continue; }
+      for (const s of sites) s._checks = await store.recentChecks(s.id);
+      try {
+        await email.send({ to, subject: `[Flowdeck] Weekly report: ${sites.length} site${sites.length === 1 ? '' : 's'}`, html: digestHtml(user, sites, now), text: sites.map((s) => s.name + ': ' + (s.status && s.status.up === false ? 'DOWN' : 'ok')).join('\n') });
+        await store.markDigestDone(day, uid);
+        sent++;
+      } catch (e) { failed++; console.error('[digest]', e.message); }
+    }
+  } finally {
+    await store.unlock('digest');
   }
-  return { sent };
+  return { sent, pending, failed };
 }
 
 function appUrl() { return (process.env.APP_URL || '').replace(/\/+$/, ''); }

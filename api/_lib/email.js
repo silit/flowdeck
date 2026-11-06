@@ -16,7 +16,7 @@ async function send({ to, subject, html, text }) {
     body: JSON.stringify({ from, to: Array.isArray(to) ? to : [to], subject, html, text })
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error('Email failed: ' + (data.message || res.status));
+  if (!res.ok) { const err = new Error('Email failed: ' + (data.message || res.status)); err.status = res.status; throw err; }
   return data;
 }
 
