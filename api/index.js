@@ -226,7 +226,7 @@ async function handleSync(req, res, user) {
   const b = await readBody(req);
   const one = b.id ? await ownedSite(user, String(b.id)) : null;
   const sites = one ? [one] : (await store.getSites(user.siteIds || [])).filter((s) => s.monitored).sort((a, b) => (a.syncedAt || 0) - (b.syncedAt || 0)).slice(0, 10);
-  let refused = 0, siteOnly = 0;
+  let refused = 0, siteOnly = 0, unclear = 0;
   const tokenState = {};
   for (const site of sites) {
     const conn = user.connections.find((c) => c.id === site.connectionId);
@@ -241,8 +241,12 @@ async function handleSync(req, res, user) {
     } catch (e) {
       if (wf.isRevoked(e)) {
         // Is the whole authorization gone, or only this site? (asked once per connection)
-        if (!tokenState[site.connectionId]) tokenState[site.connectionId] = await wf.tokenStatus(token);
-        if (tokenState[site.connectionId] !== 'revoked') { siteOnly++; continue; }
+        if (!tokenState[site.connectionId]) {
+          tokenState[site.connectionId] = await wf.tokenStatus(token);
+          if (tokenState[site.connectionId] === 'ok' && store.clearRevoked(user, site.connectionId)) await store.saveUser(user);
+        }
+        if (tokenState[site.connectionId] === 'ok') { siteOnly++; continue; }
+        if (tokenState[site.connectionId] === 'unknown') { unclear++; continue; }
         refused++;
         const removed = await store.confirmRevoked(user, site.connectionId, Date.now());
         if (removed) { user.notice = revokedNotice(removed); await store.saveUser(user); }
@@ -252,7 +256,8 @@ async function handleSync(req, res, user) {
   if (user.notice) return redirect(res, '/app');
   const n = (k) => (k === 1 ? 'one site' : k + ' sites');
   const msg = refused ? noticeQuery(user, 'Webflow refused access for ' + n(refused) + '. If you uninstalled Flowdeck in Webflow, its data will be deleted shortly; otherwise try Refresh again in a few minutes.')
-    : siteOnly ? noticeQuery(user, 'Webflow refused access to ' + n(siteOnly) + ' while your connection still works. Check that ' + (siteOnly === 1 ? 'the site is' : 'those sites are') + ' still in a workspace you authorized for Flowdeck, or connect again.') : '';
+    : siteOnly ? noticeQuery(user, 'Webflow refused access to ' + n(siteOnly) + ' while your connection still works. Check that ' + (siteOnly === 1 ? 'the site is' : 'those sites are') + ' still in a workspace you authorized for Flowdeck, or connect again.')
+    : unclear ? noticeQuery(user, 'Webflow refused access to ' + n(unclear) + ' and did not answer clearly. Try Refresh again in a few minutes.') : '';
   if (one && (user.siteIds || []).includes(one.id)) return redirect(res, '/app/site?id=' + encodeURIComponent(one.id) + '&' + (msg || 'synced=1'));
   redirect(res, '/app?' + (msg || 'synced=1'));
 }
