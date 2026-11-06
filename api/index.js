@@ -291,7 +291,7 @@ async function handleSiteMonitor(req, res, user) {
 
 async function handleCheckout(req, res, user) {
   const b = await readBody(req);
-  if (!billing.enabled()) return send(res, 503, html.errorPage('Upgrades are not open yet', 'Write to info@silitlabs.com and we will raise your limit.', '/app/settings'));
+  if (!(await billing.canCheckout(user))) return send(res, 503, html.errorPage('Upgrades are not open yet', 'Write to info@silitlabs.com and we will raise your limit.', '/app/settings'));
   try {
     const url = await billing.checkoutUrl(user, String(b.plan || ''), String(b.interval || ''), ENV().appUrl);
     redirect(res, url);
@@ -323,7 +323,7 @@ async function handleSettingsPage(req, res, user) {
   const q = queryOf(req);
   const sites = await store.getSites(user.siteIds || []);
   const notice = q.upgraded ? 'Thanks! Your plan updates as soon as the payment is confirmed, usually within a minute.' : (q.saved ? 'Settings saved.' : (q.notice ? html.esc(q.notice) : ''));
-  send(res, 200, html.settings(user, sites, notice, { billing: billing.enabled() }));
+  send(res, 200, html.settings(user, sites, notice, { billing: await billing.canCheckout(user) }));
 }
 
 async function handleSettingsSave(req, res, user) {

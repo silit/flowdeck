@@ -71,6 +71,33 @@ async function variants() {
   return map;
 }
 
+// While the store only has test-mode variants (store not yet activated by Lemon Squeezy), a checkout
+// would accept the public test card, so it is open only to the emails in BILLING_TEST_EMAILS.
+function isTester(user) {
+  const list = String(process.env.BILLING_TEST_EMAILS || '').toLowerCase().split(',').map((x) => x.trim()).filter(Boolean);
+  if (!list.length || !user) return false;
+  const own = [user.email, user.settings && user.settings.alertEmail].filter(Boolean).map((e) => String(e).trim().toLowerCase());
+  return own.some((e) => list.includes(e));
+}
+
+// 'live' when real plans can be sold, 'test' when only test-mode variants exist, 'off' otherwise.
+async function mode() {
+  if (!enabled()) return 'off';
+  try {
+    const map = await Promise.race([variants(), new Promise((_, no) => setTimeout(() => no(new Error('timeout')), 4000))]);
+    if (!Object.keys(map).some((k) => !k.startsWith('_'))) return 'off';
+    return map._test ? 'test' : 'live';
+  } catch (e) {
+    console.error('[billing] mode', e.message);
+    return 'off';
+  }
+}
+
+async function canCheckout(user) {
+  const m = await mode();
+  return m === 'live' || (m === 'test' && isTester(user));
+}
+
 function sign(userId) {
   return crypto.createHmac('sha256', process.env.SESSION_SECRET || 'flowdeck').update('billing:' + userId).digest('hex').slice(0, 24);
 }
@@ -81,6 +108,7 @@ async function checkoutUrl(user, plan, interval, appUrl) {
   const map = await variants();
   const variantId = map[plan + ':' + interval];
   if (!variantId) throw new Error(`No ${PLANS[plan].name} ${interval} variant found. Lemon Squeezy returned ${map._seen}.`);
+  if (map._test && !isTester(user)) throw new Error('Paid plans are not open yet.');
   const c = cfg();
   const data = await api('POST', '/v1/checkouts', {
     data: {
@@ -143,6 +171,9 @@ async function handleWebhook(raw, signature, deps) {
 
   const user = await deps.getUser(userId);
   if (!user) return { status: 200, body: { ignored: 'user gone' } };
+  // Test-mode payments never change a real user's plan
+  const testEvent = !!((evt.meta && evt.meta.test_mode) || (data.attributes && data.attributes.test_mode));
+  if (testEvent && !isTester(user)) return { status: 200, body: { ignored: 'test mode' } };
   // Only one subscription drives the plan: ignore events for an older one once a newer one exists
   if (user.billing && user.billing.subscriptionId && user.billing.subscriptionId !== String(data.id) && ACTIVE.includes(user.billing.status) && !ACTIVE.includes((data.attributes || {}).status)) {
     return { status: 200, body: { ignored: 'other subscription active' } };
@@ -163,4 +194,4 @@ async function portalUrl(user) {
   } catch (e) { return user.billing.portalUrl || ''; }
 }
 
-module.exports = { PLANS, enabled, planFromNames, checkoutUrl, verify, apply, handleWebhook, portalUrl, sign, _reset: () => { variantCache = null; } };
+module.exports = { PLANS, enabled, mode, canCheckout, isTester, planFromNames, checkoutUrl, verify, apply, handleWebhook, portalUrl, sign, _reset: () => { variantCache = null; } };

@@ -34,6 +34,8 @@ Plan limitleri `store.js` içinde: Free 1, Solo 5 ($9), Studio 15 ($24), Agency 
 
 Ödeme Lemon Squeezy ile: Settings'teki butonlar `/app/billing/checkout` ile ödeme sayfası açar, webhook (`/billing/webhook`, `api/billing-webhook.mjs`) planı günceller. Store'daki varyant adları plan adını (Solo, Studio, Agency) ve yıllıklar için "Yearly" kelimesini içermeli.
 
+Mağazada sadece test modu ürünler varken (Lemon Squeezy mağazayı henüz onaylamadıysa) ücretli butonlar gizlenir, "Paid plans are opening shortly" yazar ve test ödemeleri hiçbir kullanıcının planını değiştirmez. Test etmek isteyen hesapların e-postası `BILLING_TEST_EMAILS` içine virgülle yazılır. Mağaza onaylanınca: ürünleri canlı moda kopyala, canlı API anahtarı ve canlı webhook oluştur, Vercel'deki `LEMONSQUEEZY_*` değerlerini güncelle; butonlar herkese kendiliğinden açılır.
+
 ## Yayına alma
 
 1. **GitHub:** public `flowdeck` repo'su, bu klasör push.

@@ -233,15 +233,16 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
 
   console.log('6. plans and billing (Lemon Squeezy)');
   const lsCalls = [];
+  let lsTest = false;
   const ls = http.createServer(async (req, res) => {
     const u = new URL(req.url, 'http://x');
     const body = req.method === 'POST' ? await readJSON(req) : null;
     lsCalls.push({ method: req.method, path: u.pathname, search: u.search, body, auth: req.headers.authorization });
     if (u.pathname === '/v1/products') return json(res, 200, { data: [{ id: 'p1', attributes: { name: 'Flowdeck' } }] });
     if (u.pathname === '/v1/variants') return json(res, 200, { data: [
-      { id: '11', attributes: { name: 'Solo Monthly', status: 'published' } }, { id: '12', attributes: { name: 'Solo Yearly', status: 'published' } },
-      { id: '21', attributes: { name: 'Studio Monthly', status: 'published' } }, { id: '22', attributes: { name: 'Studio Yearly', status: 'published' } },
-      { id: '31', attributes: { name: 'Agency Monthly', status: 'published' } }, { id: '32', attributes: { name: 'Agency Yearly', status: 'published' } }] });
+      { id: '11', attributes: { name: 'Solo Monthly', status: 'published', test_mode: lsTest } }, { id: '12', attributes: { name: 'Solo Yearly', status: 'published', test_mode: lsTest } },
+      { id: '21', attributes: { name: 'Studio Monthly', status: 'published', test_mode: lsTest } }, { id: '22', attributes: { name: 'Studio Yearly', status: 'published', test_mode: lsTest } },
+      { id: '31', attributes: { name: 'Agency Monthly', status: 'published', test_mode: lsTest } }, { id: '32', attributes: { name: 'Agency Yearly', status: 'published', test_mode: lsTest } }] });
     if (u.pathname === '/v1/checkouts') return json(res, 201, { data: { id: 'chk1', attributes: { url: 'https://silit.lemonsqueezy.com/checkout/custom/abc' } } });
     if (u.pathname === '/v1/subscriptions/900') return json(res, 200, { data: { id: '900', attributes: { urls: { customer_portal: 'https://silit.lemonsqueezy.com/billing?fresh=1' } } } });
     json(res, 404, {});
@@ -285,6 +286,30 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
   u1 = JSON.parse(db.get('user:user_1'));
   const monitoredNow = ['siteA', 'siteB', 'siteC'].filter((id) => JSON.parse(db.get('site:' + id)).monitored);
   assert(u1.plan === 'free' && monitoredNow.length === 2 && !monitoredNow.includes('siteC'), 'expired subscription drops to free and pauses the newest site');
+
+  // Store still in test mode (not activated): no checkout for real users, test payments ignored
+  lsTest = true;
+  require('../api/_lib/billing')._reset();
+  const testPage = await request(port, 'GET', '/app/settings', { headers: { Cookie: session } });
+  assert(!testPage.body.includes('/app/billing/checkout') && testPage.body.includes('Paid plans are opening shortly'), 'test-mode store hides checkout buttons from users');
+  const checkoutsBefore = lsCalls.filter((c) => c.path === '/v1/checkouts').length;
+  const coTest = await post('/app/billing/checkout', { plan: 'agency', interval: 'monthly' });
+  assert(coTest.status === 503 && lsCalls.filter((c) => c.path === '/v1/checkouts').length === checkoutsBefore, 'test-mode checkout is refused for users');
+  wh = await sendHook({ meta: { event_name: 'subscription_created', test_mode: true, custom_data: { user_id: 'user_1', sig } }, data: Object.assign(sub('active', 'Agency Monthly', { test_mode: true }), { id: '902' }) });
+  assert(wh.body.ignored === 'test mode' && JSON.parse(db.get('user:user_1')).plan === 'free', 'test-mode payment does not upgrade a real user');
+  process.env.BILLING_TEST_EMAILS = 'someone@else.com, OWNER@agency.com';
+  const testerPage = await request(port, 'GET', '/app/settings', { headers: { Cookie: session } });
+  assert(testerPage.body.includes('/app/billing/checkout'), 'tester sees checkout buttons in test mode');
+  const coTester = await post('/app/billing/checkout', { plan: 'agency', interval: 'monthly' });
+  const lastCo = lsCalls.filter((c) => c.path === '/v1/checkouts').pop();
+  assert(coTester.status === 302 && lastCo.body.data.attributes.test_mode === true, 'tester gets a test-mode checkout');
+  wh = await sendHook({ meta: { event_name: 'subscription_created', test_mode: true, custom_data: { user_id: 'user_1', sig } }, data: Object.assign(sub('active', 'Agency Monthly', { test_mode: true }), { id: '903' }) });
+  assert(wh.body.ok && JSON.parse(db.get('user:user_1')).plan === 'agency', 'tester test payment upgrades the plan');
+  wh = await sendHook({ meta: { event_name: 'subscription_expired', test_mode: true }, data: Object.assign(sub('expired', 'Agency Monthly', { test_mode: true, ends_at: iso(now - DAY) }), { id: '903' }) });
+  assert(JSON.parse(db.get('user:user_1')).plan === 'free', 'tester test subscription expiring returns to free');
+  delete process.env.BILLING_TEST_EMAILS;
+  lsTest = false;
+  require('../api/_lib/billing')._reset();
   ls.close();
 
   console.log('6b. install from the Marketplace link (no state, no redirect_uri) signs in');
