@@ -38,7 +38,7 @@ async function runChecks(now) {
   if (!(await store.lock('checks', 240))) return { skipped: 'locked' };
   try {
     if (!emailIndexChecked) {
-      try { await store.ensureEmailIndex(); emailIndexChecked = true; } catch (e) { console.error('[email index]', e.message); }
+      try { if ((await store.ensureEmailIndex()) >= 0) emailIndexChecked = true; } catch (e) { console.error('[email index]', e.message); }
     }
     const ids = await store.allSiteIds();
     const sites = (await store.getSites(ids)).sort((a, b) => ((a.status && a.status.lastCheckAt) || 0) - ((b.status && b.status.lastCheckAt) || 0));
@@ -71,12 +71,12 @@ async function runChecks(now) {
         }
       }
       checks.addDaily(st, c);
-      await store.pushCheck(site.id, { t: c.t, ok: c.ok, code: c.code, ms: c.ms });
       // Write only the status onto the latest record (the user may have changed the site meanwhile)
       const fresh = await store.saveSiteStatus(site.id, st);
       if (!fresh) return { id: site.id, skipped: 'removed' };
+      await store.pushCheck(site.id, { t: c.t, ok: c.ok, code: c.code, ms: c.ms });
       if (!users[site.userId]) users[site.userId] = await store.getUser(site.userId);
-      const fired = fresh.monitored ? await alerts.process(fresh, users[site.userId], now) : [];
+      const fired = fresh.monitored ? await alerts.process(fresh, users[site.userId], now, ['down', 'ssl']) : [];
       return { id: site.id, ok: c.ok, code: c.code, ms: c.ms, alerts: fired };
     });
     return { checked: results.length, results };
@@ -118,8 +118,19 @@ async function runSync(now, batch) {
           results.push({ id: site.id, error: e.message });
           continue;
         }
-        // App uninstalled or access revoked in Webflow: after a second 401 at least 10 minutes later,
-        // delete the token and its sites and stop calling the API.
+        // A 401 for this site. Ask Webflow whether the token itself still works: if it does, only
+        // this site is refused (e.g. moved to another workspace) and nothing is deleted.
+        const ts = await wf.tokenStatus(token);
+        if (ts !== 'revoked') {
+          if (ts === 'ok' && store.clearRevoked(user, site.connectionId)) await store.saveUser(user);
+          site.syncedAt = now;
+          site.syncError = ts === 'ok' ? 'Webflow refused access to this site. Check that it is still in a workspace you authorized for Flowdeck, or connect again.' : 'Webflow refused access. Checking again later.';
+          await store.saveSiteSync(site);
+          results.push({ id: site.id, error: 'site refused' });
+          continue;
+        }
+        // App uninstalled or access revoked in Webflow: after a second refusal at least 10 minutes
+        // later, delete the token and its sites and stop calling the API.
         const removed = await store.confirmRevoked(user, site.connectionId, now);
         if (removed) {
           const n = removed._sites.length;
@@ -127,7 +138,7 @@ async function runSync(now, batch) {
           await store.saveUser(user);
           results.push({ id: site.id, revoked: true });
         } else {
-          // Keep its place at the front of the queue so the next run confirms it.
+          site.syncedAt = now; // back of the queue, so the other sites keep syncing meanwhile
           site.syncError = 'Webflow refused access. Checking again shortly.';
           await store.saveSiteSync(site);
           results.push({ id: site.id, revokedPending: true });
@@ -141,7 +152,7 @@ async function runSync(now, batch) {
       }
       const saved = await store.saveSiteSync(site);
       if (!saved) { results.push({ id: site.id, error: 'removed' }); continue; }
-      if (saved.monitored) await alerts.process(saved, user, now);
+      if (saved.monitored) await alerts.process(saved, user, now, ['unpublished', 'forms_silent']);
       results.push({ id: site.id, errors: site.data ? site.data.errors : [] });
     }
     return { synced: results.length, results };
@@ -178,6 +189,7 @@ async function runDigest(now, force) {
   if (!force && wd !== 1 && wd !== 2) return { skipped: 'not monday' };
   const monday = new Date(now - ((wd + 6) % 7) * DAY);
   const day = monday.toISOString().slice(0, 10); // the week's Monday
+  if (await store.legacyDigestDone(day)) return { skipped: 'already sent' };
   if (!(await store.lock('digest', 300))) return { skipped: 'locked' };
   const started = Date.now();
   let sent = 0, pending = 0, failed = 0;

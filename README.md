@@ -27,7 +27,7 @@ assets/               logo (900 ve 256 px), Marketplace metinleri (listing.md)
 2. `/callback` → token şifrelenip kullanıcı kaydına yazılır (zamanlanmış işler için gerekli), siteler kaydedilir, ilk 5 site hemen senkronlanır ve bir uptime kontrolü yapılır.
 3. `/cron/checks` (5 dakikada bir): her izlenen siteye HTTP isteği, saatte bir TLS sertifika tarihi, ardından uyarı kuralları. 2 ardışık hata = down. Uyarı e-postası problem başlayınca bir kez, bitince bir kez.
 4. `/cron/sync` (15 dakikada bir): en uzun süredir senkronlanmamış 8 site için Webflow verisi (sayfa SEO alanları, form gönderim tarihleri, koleksiyon item sayıları). Böylece her site günde birkaç kez yenilenir, Webflow rate limit'i (60 istek/dk) aşılmaz.
-5. `/cron/digest` (günde bir, sadece pazartesi gönderir): haftalık özet e-postası.
+5. `/cron/digest` (günde bir veya saatte bir; pazartesi gönderir, salı kaçanları tamamlar): haftalık özet e-postası, kullanıcı başına haftada bir.
 6. `/r/{token}`: müşteri raporu, oturum gerektirmez, `noindex`.
 
 Plan limitleri `store.js` içinde: Free 1, Solo 5 ($9), Studio 15 ($24), Agency 40 ($49); yıllıkta 2 ay bedava. `COMPLIMENTARY_EMAILS` içindeki e-postalar ücretsiz Agency limiti alır. Kullanıcıya elle limit vermek için Redis'teki user kaydına `limitOverride` yazılır. Limit üstündeki siteler "Paused" olur, silinmez.
@@ -39,10 +39,14 @@ Mağazada sadece test modu ürünler varken (Lemon Squeezy mağazayı henüz ona
 ## Güvenlik ve dayanıklılık notları
 
 - `SESSION_SECRET` hem oturum çerezlerini hem kayıtlı Webflow tokenlarını şifreler. **Asla değiştirme**: değişirse herkesin oturumu kapanır ve kayıtlı tokenlar açılamaz (kullanıcıların Webflow'u yeniden bağlaması gerekir).
-- Webflow bir bağlantı için 401 dönerse hemen silinmez: en az 10 dakika sonra ikinci bir 401 gelirse token ve siteleri silinir (`REVOKE_CONFIRM_MS`, varsayılan 600000).
+- Webflow bir site için 401 dönerse önce token'ın kendisi sorulur (`/token/authorized_by`). Token çalışıyorsa sadece o site reddedilmiştir; hiçbir şey silinmez, sitede uyarı görünür. Token da reddediliyorsa (uygulama kaldırılmış) en az 10 dakika sonraki ikinci reddedişte token ve siteleri silinir (`REVOKE_CONFIRM_MS`, varsayılan 600000).
+- Uyarılar işlere bölünmüştür: checks işi `down` ve `ssl`, sync işi `unpublished` ve `forms_silent` kurallarını değerlendirir; biri diğerinin uyarısını eski veriyle kapatamaz.
+- Uyarı e-postası gitmezse "gönderildi" sayılmaz. Geçici hatalarda (429, 5xx, ağ) bir sonraki çalıştırmada tekrar denenir; Resend kalıcı olarak reddederse (ör. geçersiz adres) 5 dk'dan 6 saate kadar artan aralıklarla denenir.
+- Kontrol ve senkron sonuçları sitenin en güncel kaydına yazılır (`SET ... XX`); bu sırada kullanıcının yaptığı değişiklikler kaybolmaz, silinmiş site geri gelmez.
+- Giriş limitleri: IP başına 10 dakikada 10 istek (IPv6 için /64 başına), adres başına dakikada 1 link, toplamda saatte 300 link. Kayıtlı olmayan adresler ortak limiti tüketmez.
 - Uptime kontrolleri yönlendirmeleri sadece sitenin kendi alan adları içinde izler; özel, loopback ve link-local adreslere hiç istek atmaz (`ALLOW_PRIVATE_CHECKS=1` sadece yerel testler içindir, canlıda koyma).
 - Uyarı e-postası gönderilemezse uyarı "gönderildi" sayılmaz, bir sonraki kontrolde tekrar denenir.
-- Haftalık özet kullanıcı başına ilerlemeyi tutar; yarıda kalırsa aynı gün sonraki çalıştırma kaldığı yerden devam eder. Bu yüzden `cron/digest` işini cron-job.org'da her saat çalıştırmak güvenlidir (sadece pazartesi gönderir).
+- Haftalık özet kullanıcı başına ve hafta başına ilerlemeyi tutar; yarıda kalırsa sonraki çalıştırma (pazartesi veya salı) kaldığı yerden devam eder. Bu yüzden `cron/digest` işini cron-job.org'da her saat çalıştırmak güvenlidir.
 - Giriş linki: adres başına dakikada 1, IP başına 10 dakikada 10, toplamda saatte 300 istek.
 - Bildirimler (`?notice=`) imzalı; URL'ye yazılan metin sayfada görünmez.
 - Hesap silinirken aktif abonelik varsa önce Lemon Squeezy'de iptal edilir; iptal edilemezse silme durur.

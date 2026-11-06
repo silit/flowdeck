@@ -20,8 +20,9 @@ function exec(cmd) {
     case 'GETDEL': { const v = alive(a[0]) ? db.get(a[0]) : null; db.delete(a[0]); ttl.delete(a[0]); return v; }
     case 'MGET': return a.map((k) => (alive(k) ? db.get(k) : null));
     case 'SET': {
-      const nx = a.includes('NX'); const exI = a.indexOf('EX');
+      const nx = a.includes('NX'); const xx = a.includes('XX'); const exI = a.indexOf('EX');
       if (nx && alive(a[0])) return null;
+      if (xx && !alive(a[0])) return null;
       db.set(a[0], a[1]);
       if (exI > -1) ttl.set(a[0], Date.now() + parseInt(a[exI + 1], 10) * 1000); else ttl.delete(a[0]);
       return 'OK';
@@ -53,7 +54,7 @@ const siteB = http.createServer((req, res) => { res.writeHead(siteBStatus, { 'Co
 /* ---- mock Resend ---- */
 const emails = [];
 let resendFail = false;
-const resend = http.createServer(async (req, res) => { const body = await readJSON(req); if (resendFail) return json(res, 500, { message: 'resend down' }); emails.push(body); json(res, 200, { id: 'em_' + emails.length }); });
+const resend = http.createServer(async (req, res) => { const body = await readJSON(req); if (resendFail) return json(res, resendFail === true ? 500 : resendFail, { message: resendFail === true ? 'resend down' : 'refused' }); emails.push(body); json(res, 200, { id: 'em_' + emails.length }); });
 
 /* ---- mock Webflow ---- */
 const DAY = 86400000;
@@ -73,6 +74,7 @@ const webflow = http.createServer(async (req, res) => {
   }
   if (u.pathname === '/oauth/revoke_authorization') { wfState.revokeCalls.push(body); return json(res, 200, { didRevoke: true }); }
   if (wfState.revoked || (req.headers.authorization || '') !== 'Bearer tok_abc') return json(res, 401, { message: 'Request not authorized' });
+  if ((wfState.refusedSites || []).some((id) => u.pathname.includes('/' + id))) return json(res, 401, { message: 'Request not authorized' });
   const p = u.pathname;
   let m;
   if (p === '/v2/token/authorized_by') return json(res, 200, { id: 'user_1', email: 'owner@agency.com', firstName: 'Ada', lastName: 'Lovelace' });
@@ -196,8 +198,7 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
   b = JSON.parse(db.get('site:siteB'));
   const upMails = emails.filter((e) => e.subject.includes('back up'));
   assert(b.status.up === true && upMails.length === 1, 'recovery marks up and emails once');
-  const unpub = emails.find((e) => e.subject.includes('unpublished changes'));
-  assert(unpub && unpub.subject.includes('Blue Yachts'), 'unpublished-for-7-days alert fired for site B');
+  assert(!emails.some((e) => e.subject.includes('unpublished changes')), 'the checks job leaves the unpublished rule to the sync job');
   const checksA = JSON.parse(db.get('site:siteA'));
   assert((db.get('uptime:siteA') || []).length === 5, 'uptime history stored (1 initial + 4 cron)');
 
@@ -227,6 +228,8 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
   const a2 = JSON.parse(db.get('site:siteA'));
   assert(a2.data.forms.total30 === 0 && a2.data.forms.before30 === 3, 'baseline kept for the silent-form rule');
   assert(emails.some((e) => e.subject.includes('No form submissions')), 'silent form alert fired');
+  const unpub = emails.find((e) => e.subject.includes('unpublished changes'));
+  assert(unpub && unpub.subject.includes('Blue Yachts'), 'unpublished-for-7-days alert fired for site B');
   r = await request(port, 'GET', '/cron/digest?key=cronkey&force=1');
   out = JSON.parse(r.body);
   assert(out.sent === 1 && emails[emails.length - 1].subject.includes('Weekly report') && emails[emails.length - 1].html.includes('Acme Dental Clinic'), 'weekly digest sent with the site table');
@@ -453,9 +456,12 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
   resendFail = true;
   const fail1 = await alertsMod.process(downSite, alertUser, Date.now());
   assert(fail1.some((x) => x.type === 'down' && x.state === 'retry') && !db.has('alert:siteZ:down'), 'a failed alert email is not marked as sent');
+  assert(!db.has('alertfail:siteZ:down'), 'a temporary email failure (server error) is simply retried on the next run');
+  resendFail = 422;
+  const fail2 = await alertsMod.process(downSite, alertUser, Date.now());
   resendFail = false;
   const wait1 = await alertsMod.process(downSite, alertUser, Date.now());
-  assert(wait1.some((x) => x.type === 'down' && x.state === 'waiting') && !db.has('alert:siteZ:down'), 'after a failed email the next try waits (backoff) instead of hammering the email service');
+  assert(fail2.some((x) => x.state === 'retry') && wait1.some((x) => x.type === 'down' && x.state === 'waiting') && !db.has('alert:siteZ:down'), 'an email the service refuses backs off instead of hammering it');
   const ok1 = await alertsMod.process(downSite, alertUser, Date.now() + 6 * 60000);
   assert(ok1.some((x) => x.type === 'down' && x.state === 'opened') && db.has('alert:siteZ:down') && !db.has('alertfail:siteZ:down') && emails.slice(-1)[0].subject.includes('Zed is down'), 'the alert email goes out once the wait is over');
   // a check result never overwrites settings the user changed meanwhile
@@ -469,6 +475,10 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
   assert(merged.status.code === 299 && merged.monitored === false && merged.pausedByUser === true && merged.settings.client === 'Renamed Client', 'saving a check result keeps settings changed during the check');
   db.delete('site:siteT');
   assert((await storeMod.saveSiteStatus('nope', {})) === null && !db.has('site:nope'), 'a check result for a removed site does not bring it back');
+  // an old backoff record is forgotten once the problem is over
+  db.set('alertfail:siteY:down', JSON.stringify({ n: 3, until: Date.now() + 3600000 }));
+  await alertsMod.process({ id: 'siteY', name: 'Y', url: 'https://y.test', settings: { alerts: true }, status: { fails: 0 } }, alertUser, Date.now());
+  assert(!db.has('alertfail:siteY:down'), 'a recovered site does not carry an old email backoff into its next outage');
   // signed notices only
   const s10 = cookiesFrom(await request(port, 'GET', '/callback?code=install-code'));
   const forgedNotice = await request(port, 'GET', '/app?notice=' + encodeURIComponent('Your account is suspended, call 555'), { headers: { Cookie: s10 } });
@@ -509,6 +519,29 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
   const dWed = await jobsMod.runDigest(dgWed);
   const dMon2 = await jobsMod.runDigest(Date.parse('2030-01-14T08:00:00Z'));
   assert(dTue1.sent === 1 && dMon.sent === 0 && dWed.skipped && dMon2.sent === 1, 'weekly digest: Tuesday catches up a missed Monday, never twice a week, next week sends again');
+
+  // compressed IPv6 addresses in one /64 share the limit too
+  for (let i = 0; i < 10; i++) await loginFrom('2001:db8:cc::' + (i + 1).toString(16), 'nobody' + i + '@example.com');
+  db.delete('loginrl:' + uRec.email);
+  const mails6b = emails.length;
+  await loginFrom('2001:db8:cc:0:ffff::1', uRec.email);
+  assert(emails.length === mails6b, 'compressed IPv6 forms of one /64 are counted together');
+  // a digest already sent by the previous version this week is not sent again
+  db.set('lock:digest:2030-01-21', JSON.stringify({ at: 1 }));
+  const dLegacy = await jobsMod.runDigest(Date.parse('2030-01-21T09:00:00Z'));
+  assert(dLegacy.skipped === 'already sent', 'a digest the previous version already sent this week is not repeated');
+  // Webflow refuses one site while the token still works: nothing is deleted
+  wfState.refusedSites = ['siteA'];
+  const connBefore = JSON.parse(db.get('user:user_1')).connections.length;
+  await request(port, 'GET', '/cron/sync?key=cronkey');
+  await request(port, 'GET', '/cron/sync?key=cronkey');
+  const uRef = JSON.parse(db.get('user:user_1'));
+  const aRef = db.get('site:siteA') && JSON.parse(db.get('site:siteA'));
+  assert(uRef.connections.length === connBefore && aRef && /refused access to this site/.test(aRef.syncError) && !uRef.connections[0].revokedSince, 'one refused site with a working token never deletes the connection');
+  const refOne = await request(port, 'POST', '/app/sync', { headers: { Cookie: s10, 'Content-Type': 'application/x-www-form-urlencoded', Origin: 'https://app.test' }, body: form({ id: 'siteA' }) });
+  const refOnePage = refOne.headers.location && await request(port, 'GET', refOne.headers.location, { headers: { Cookie: s10 } });
+  assert(refOne.headers.location.startsWith('/app/site?id=siteA&notice=') && refOnePage.body.includes('while your connection still works'), 'Refresh on the site page explains a refused site');
+  wfState.refusedSites = [];
 
   // manual Refresh while Webflow refuses access: the user is told, nothing is deleted on the first refusal
   wfState.revoked = true;

@@ -56,6 +56,8 @@ async function setJSON(key, value, ttl) {
   if (ttl) args.push('EX', String(ttl));
   return command(...args);
 }
+// SET ... XX: writes only when the key still exists (a record deleted meanwhile is not brought back)
+async function setJSONIfExists(key, value) { return (await command('SET', key, JSON.stringify(value), 'XX')) === 'OK'; }
 async function getDelJSON(key) { return parse(await command('GETDEL', key)); }
 async function del(...keys) { return keys.length ? command('DEL', ...keys) : 0; }
 async function setNX(key, value, ttl) {
@@ -77,4 +79,4 @@ async function lrangeJSON(key, count) {
 async function incr(key) { return command('INCR', key); }
 async function expire(key, ttl) { return command('EXPIRE', key, String(ttl)); }
 
-module.exports = { enabled, command, pipeline, getJSON, getDelJSON, mgetJSON, setJSON, del, setNX, sadd, srem, smembers, lpushJSON, lrangeJSON, incr, expire };
+module.exports = { enabled, command, pipeline, getJSON, getDelJSON, setJSONIfExists, mgetJSON, setJSON, del, setNX, sadd, srem, smembers, lpushJSON, lrangeJSON, incr, expire };

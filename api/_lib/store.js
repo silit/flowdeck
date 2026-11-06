@@ -55,14 +55,18 @@ async function findUserByEmail(email) {
   // ensureEmailIndex() fills the index once for accounts created before it existed.
   return null;
 }
+// Returns the number of accounts indexed, 0 when it was done before, -1 when another run is on it.
 async function ensureEmailIndex() {
   if (await kv.getJSON('migr:email-index')) return 0; // done before
-  if (!(await kv.setNX('migr:email-index:run', { at: Date.now() }, 120))) return 0; // another run is on it
+  if (!(await kv.setNX('migr:email-index:run', { at: Date.now() }, 120))) return -1; // another run is on it
   try {
     let n = 0;
-    for (const id of await allUserIds()) {
-      const u = await getUser(id);
-      if (u && u.email) { await kv.setJSON('email:' + String(u.email).toLowerCase(), { u: u.id }); n++; }
+    const ids = await allUserIds();
+    for (let i = 0; i < ids.length; i += 100) {
+      const users = await kv.mgetJSON(ids.slice(i, i + 100).map((id) => 'user:' + id));
+      const cmds = users.filter((u) => u && u.email).map((u) => ['SET', 'email:' + String(u.email).toLowerCase(), JSON.stringify({ u: u.id })]);
+      if (cmds.length) await kv.pipeline(cmds);
+      n += cmds.length;
     }
     await kv.setJSON('migr:email-index', { at: Date.now(), n }); // only marked done once it finished
     return n;
@@ -149,8 +153,7 @@ async function saveSiteStatus(siteId, status) {
   if (!fresh) return null;
   fresh.status = status;
   fresh.updatedAt = Date.now();
-  await kv.setJSON('site:' + siteId, fresh);
-  return fresh;
+  return (await kv.setJSONIfExists('site:' + siteId, fresh)) ? fresh : null;
 }
 // The sync job owns the Webflow data and metadata fields; same merge onto the latest record.
 const SYNC_FIELDS = ['name', 'shortName', 'domains', 'url', 'previewUrl', 'lastPublished', 'lastUpdated', 'data', 'syncedAt', 'syncError'];
@@ -158,7 +161,10 @@ async function saveSiteSync(site) {
   const fresh = await getSite(site.id);
   if (!fresh) return null;
   for (const k of SYNC_FIELDS) if (site[k] !== undefined) fresh[k] = site[k];
-  return saveSite(fresh);
+  fresh.updatedAt = Date.now();
+  if (!(await kv.setJSONIfExists('site:' + fresh.id, fresh))) return null; // removed meanwhile
+  if (fresh.monitored) await kv.sadd('sites:all', fresh.id); else await kv.srem('sites:all', fresh.id);
+  return fresh;
 }
 async function allSiteIds() { return kv.smembers('sites:all'); }
 async function deleteSite(id) {
@@ -216,6 +222,14 @@ async function pushCheck(siteId, check) {
 async function recentChecks(siteId, count) { return kv.lrangeJSON('uptime:' + siteId, count || UPTIME_KEEP); }
 
 async function getAlert(siteId, type) { return kv.getJSON(`alert:${siteId}:${type}`); }
+// Alert states and email backoff records for a site, in one read.
+async function getAlertStates(siteId, types) {
+  const vals = await kv.mgetJSON([...types.map((t) => `alert:${siteId}:${t}`), ...types.map((t) => `alertfail:${siteId}:${t}`)]);
+  return {
+    states: Object.fromEntries(types.map((t, i) => [t, vals[i] || null])),
+    fails: Object.fromEntries(types.map((t, i) => [t, vals[types.length + i] || null]))
+  };
+}
 async function getAlerts(siteId, types) {
   const vals = await kv.mgetJSON(types.map((t) => `alert:${siteId}:${t}`));
   return Object.fromEntries(types.map((t, i) => [t, vals[i] || null]));
@@ -286,6 +300,8 @@ function clearRevoked(user, connId) {
 // Weekly digest progress per user, so a timeout or error never skips the rest for a week.
 async function digestDone(day, userId) { return !!(await kv.getJSON(`digestsent:${day}:${userId}`)); }
 async function markDigestDone(day, userId) { return kv.setJSON(`digestsent:${day}:${userId}`, { at: Date.now() }, 3 * 86400); }
+// The previous version marked a sent digest with one lock per day; respect it so nobody gets two.
+async function legacyDigestDone(day) { return !!(await kv.getJSON('lock:digest:' + day)); }
 
 async function lock(name, ttl) { return kv.setNX('lock:' + name, { at: Date.now() }, ttl || 240); }
 async function unlock(name) { return kv.del('lock:' + name); }
@@ -295,6 +311,6 @@ module.exports = {
   getUser, saveUser, allUserIds, newUser, addConnection, tokenOf, removeConnection,
   findUserByEmail, ensureEmailIndex, createLoginToken, peekLoginToken, consumeLoginToken, loginRateOk, rateOk,
   getSite, getSites, saveSite, saveSiteStatus, saveSiteSync, allSiteIds, deleteSite, newSite, refreshMeta, primaryUrl,
-  pushCheck, recentChecks, getAlert, getAlerts, setAlert, clearAlert, getAlertFail, setAlertFail, clearAlertFail, ensureReportToken, siteIdForReport, deleteReport, deleteUser, enforceLimit,
-  confirmRevoked, clearRevoked, digestDone, markDigestDone, lock, unlock
+  pushCheck, recentChecks, getAlert, getAlerts, getAlertStates, setAlert, clearAlert, getAlertFail, setAlertFail, clearAlertFail, ensureReportToken, siteIdForReport, deleteReport, deleteUser, enforceLimit,
+  confirmRevoked, clearRevoked, digestDone, markDigestDone, legacyDigestDone, lock, unlock
 };

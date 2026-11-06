@@ -79,6 +79,11 @@ async function revokeToken({ clientId, clientSecret, token }) {
 const isRevoked = (e) => !!e && e.status === 401;
 
 const authorizedBy = (token) => call(token, 'GET', '/token/authorized_by');
+// After a 401 on one site: 'revoked' only when the token itself is refused (app uninstalled or
+// access revoked), 'ok' when the token works and only that site is refused, 'unknown' otherwise.
+async function tokenStatus(token) {
+  try { await authorizedBy(token); return 'ok'; } catch (e) { return isRevoked(e) ? 'revoked' : 'unknown'; }
+}
 const listSites = async (token) => ((await call(token, 'GET', '/sites')) || {}).sites || [];
 const getSite = (token, siteId) => call(token, 'GET', '/sites/' + siteId);
 
@@ -128,4 +133,4 @@ async function listSubmissions(token, siteId, since, max) {
   return out;
 }
 
-module.exports = { SCOPES, call, authorizeUrl, exchangeCode, revokeToken, isRevoked, authorizedBy, listSites, getSite, listPages, listCollections, countItems, listSubmissions };
+module.exports = { SCOPES, call, authorizeUrl, exchangeCode, revokeToken, isRevoked, authorizedBy, tokenStatus, listSites, getSite, listPages, listCollections, countItems, listSubmissions };

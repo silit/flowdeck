@@ -16,6 +16,7 @@ const { syncSite } = require('./_lib/sync');
 const billing = require('./_lib/billing');
 const email = require('./_lib/email');
 const crypto = require('crypto');
+const net = require('net');
 
 const ENV = () => ({
   clientId: process.env.WEBFLOW_CLIENT_ID || '',
@@ -225,7 +226,8 @@ async function handleSync(req, res, user) {
   const b = await readBody(req);
   const one = b.id ? await ownedSite(user, String(b.id)) : null;
   const sites = one ? [one] : (await store.getSites(user.siteIds || [])).filter((s) => s.monitored).sort((a, b) => (a.syncedAt || 0) - (b.syncedAt || 0)).slice(0, 10);
-  let refused = 0;
+  let refused = 0, siteOnly = 0;
+  const tokenState = {};
   for (const site of sites) {
     const conn = user.connections.find((c) => c.id === site.connectionId);
     const token = conn && store.tokenOf(conn);
@@ -238,6 +240,9 @@ async function handleSync(req, res, user) {
       if (store.clearRevoked(user, site.connectionId)) await store.saveUser(user);
     } catch (e) {
       if (wf.isRevoked(e)) {
+        // Is the whole authorization gone, or only this site? (asked once per connection)
+        if (!tokenState[site.connectionId]) tokenState[site.connectionId] = await wf.tokenStatus(token);
+        if (tokenState[site.connectionId] !== 'revoked') { siteOnly++; continue; }
         refused++;
         const removed = await store.confirmRevoked(user, site.connectionId, Date.now());
         if (removed) { user.notice = revokedNotice(removed); await store.saveUser(user); }
@@ -245,7 +250,9 @@ async function handleSync(req, res, user) {
     }
   }
   if (user.notice) return redirect(res, '/app');
-  const msg = refused ? noticeQuery(user, 'Webflow refused access for ' + (refused === 1 ? 'one site' : refused + ' sites') + '. If you uninstalled Flowdeck in Webflow, its data will be deleted shortly; otherwise try Refresh again in a few minutes.') : '';
+  const n = (k) => (k === 1 ? 'one site' : k + ' sites');
+  const msg = refused ? noticeQuery(user, 'Webflow refused access for ' + n(refused) + '. If you uninstalled Flowdeck in Webflow, its data will be deleted shortly; otherwise try Refresh again in a few minutes.')
+    : siteOnly ? noticeQuery(user, 'Webflow refused access to ' + n(siteOnly) + ' while your connection still works. Check that ' + (siteOnly === 1 ? 'the site is' : 'those sites are') + ' still in a workspace you authorized for Flowdeck, or connect again.') : '';
   if (one && (user.siteIds || []).includes(one.id)) return redirect(res, '/app/site?id=' + encodeURIComponent(one.id) + '&' + (msg || 'synced=1'));
   redirect(res, '/app?' + (msg || 'synced=1'));
 }
@@ -261,7 +268,7 @@ async function handleSitePage(req, res, user) {
   const site = await ownedSite(user, q.id);
   if (!site) return send(res, 404, html.errorPage('Site not found', 'That site is not connected to your account.'));
   const recent = await store.recentChecks(site.id);
-  const notice = q.full ? `Your plan monitors up to ${user._limit} site${user._limit === 1 ? '' : 's'}. Pause another site or <a href="/app/settings#plan">upgrade</a>.` : (q.saved ? 'Settings saved.' : (q.synced ? 'Data refreshed from Webflow.' : ''));
+  const notice = q.full ? `Your plan monitors up to ${user._limit} site${user._limit === 1 ? '' : 's'}. Pause another site or <a href="/app/settings#plan">upgrade</a>.` : (q.saved ? 'Settings saved.' : (q.synced ? 'Data refreshed from Webflow.' : html.esc(noticeFrom(q, user))));
   send(res, 200, html.siteDetail(user, site, recent, Date.now(), notice));
 }
 
@@ -409,7 +416,13 @@ function clientIp(req) {
   const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
   const ip = fwd || String(req.headers['x-real-ip'] || '') || (req.socket && req.socket.remoteAddress) || 'unknown';
   // One IPv6 user usually holds a whole /64, so count the /64 as one address
-  return ip.includes(':') && !ip.startsWith('::ffff:') ? ip.split(':').slice(0, 4).join(':') + '::/64' : ip;
+  if (!net.isIPv6(ip)) return ip;
+  if (/^::ffff:/i.test(ip) && net.isIPv4(ip.slice(7))) return ip.slice(7);
+  const [head, tail] = ip.toLowerCase().split('::');
+  const h = head ? head.split(':') : [];
+  const t = tail !== undefined && tail ? tail.split(':') : [];
+  const groups = tail !== undefined ? [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill('0'), ...t] : h;
+  return groups.slice(0, 4).map((g) => parseInt(g, 16).toString(16)).join(':') + '::/64';
 }
 
 async function handleLoginPost(req, res) {
