@@ -96,6 +96,32 @@ function sameOrigin(req) {
   try { return new URL(origin).host === new URL(ENV().appUrl || 'http://local').host || new URL(origin).host === req.headers.host; } catch (e) { return false; }
 }
 
+/* ---------- cheap limits for public addresses (no database) ---------- */
+
+// A flood on a public address must never reach the database or Webflow. These counters live in the
+// memory of the function instance, cost nothing, and only stop a client far beyond normal use.
+// They are a second line behind the firewall rate limit; the limits that matter for sign in stay
+// in the database (see handleLoginPost).
+const localHits = new Map(); // key -> { n, until }
+function localRateOk(key, max, windowMs, now) {
+  now = now || Date.now();
+  if (localHits.size > 5000) {
+    for (const [k, v] of localHits) if (v.until <= now) localHits.delete(k);
+    if (localHits.size > 5000) localHits.clear(); // more addresses than we track: start over
+  }
+  const h = localHits.get(key);
+  if (!h || h.until <= now) { localHits.set(key, { n: 1, until: now + windowMs }); return true; }
+  h.n++;
+  return h.n <= max;
+}
+function tooMany(res, back) {
+  return send(res, 429, html.errorPage('Too many requests', 'Please wait a minute and try again.', back || '/'), { 'Retry-After': '60' });
+}
+// Shapes of the links we hand out (base64url): a sign in link has 32 characters, a report link 16.
+// Anything else cannot exist, so it is answered without a database read.
+const LOGIN_TOKEN_RE = /^[A-Za-z0-9_-]{16,64}$/;
+const REPORT_TOKEN_RE = /^[A-Za-z0-9_-]{8,64}$/;
+
 /* ---------- auth ---------- */
 
 async function currentUser(req) {
@@ -131,6 +157,11 @@ async function handleCallback(req, res) {
   // install link (Webflow's recommended form) carries no state and no redirect_uri.
   const fromAuthLink = !!q.state;
   if (fromAuthLink && (!c.fd_state || !timingEqual(q.state, c.fd_state))) return send(res, 400, html.errorPage('Sign in expired', 'This sign in request did not match the one we started, or it took longer than 10 minutes. Please start again.', '/auth'));
+
+  // Every call below asks Webflow to exchange a code with our client secret: never let one address
+  // do that in a loop.
+  if (String(q.code).length > 512) return send(res, 400, html.errorPage('Missing code', 'Webflow did not return an authorization code.', '/'));
+  if (!localRateOk('cb:' + clientIp(req), 20, 60000)) return tooMany(res, '/');
 
   const started = Date.now();
   let token;
@@ -436,7 +467,9 @@ async function handleLoginPost(req, res) {
   if (addr.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) return redirect(res, '/login?bad=1');
   // Limits: 10 requests per IP per 10 minutes; for real accounts, one link per address per minute and
   // 300 links an hour in total. Unknown addresses never use up the shared budget.
-  if (await store.rateOk('login-ip:' + clientIp(req), 10, 600)) {
+  // The local counter only spares the database during a flood; the answer stays the same.
+  const ip = clientIp(req);
+  if (localRateOk('login:' + ip, 30, 600000) && (await store.rateOk('login-ip:' + ip, 10, 600))) {
     const user = await store.findUserByEmail(addr);
     if (user && (await store.loginRateOk(addr)) && (await store.rateOk('login-all', 300, 3600))) {
       const t = await store.createLoginToken(user.id);
@@ -453,6 +486,8 @@ async function handleLoginPost(req, res) {
 }
 
 async function handleLoginLink(req, res, token, method) {
+  if (!LOGIN_TOKEN_RE.test(token)) return send(res, 400, html.errorPage('Link expired', 'This sign in link was already used or is older than 15 minutes. Ask for a new one.', '/login'));
+  if (!localRateOk('l:' + clientIp(req), 30, 60000)) return tooMany(res, '/login');
   if (method === 'POST') {
     if (!sameOrigin(req)) return send(res, 403, html.errorPage('Blocked', 'Cross-site request blocked.', '/login'));
     const rec = await store.consumeLoginToken(token);
@@ -468,12 +503,18 @@ async function handleLoginLink(req, res, token, method) {
 }
 
 async function handleReport(req, res, token) {
+  const gone = () => send(res, 404, html.errorPage('Report not found', 'This report link is no longer valid.', '/'));
+  if (!REPORT_TOKEN_RE.test(token)) return gone();
+  if (!localRateOk('r:' + clientIp(req), 60, 60000)) return tooMany(res, '/');
   const siteId = await store.siteIdForReport(token);
   const site = siteId ? await store.getSite(siteId) : null;
-  if (!site || site.settings.reportToken !== token) return send(res, 404, html.errorPage('Report not found', 'This report link is no longer valid.', '/'));
+  if (!site || site.settings.reportToken !== token) return gone();
   const user = await store.getUser(site.userId);
   const recent = await store.recentChecks(site.id);
-  send(res, 200, html.report(user, site, recent, Date.now()), { 'X-Robots-Tag': 'noindex' });
+  // The page is the same for every visitor and the data changes every 5 minutes at most, so the CDN
+  // may keep it for one minute: a client (or a script) reloading a report does not start the
+  // function or read the database each time. A replaced link stops working within that minute.
+  send(res, 200, html.report(user, site, recent, Date.now()), { 'X-Robots-Tag': 'noindex', 'Cache-Control': 'public, max-age=0, s-maxage=60' });
 }
 
 /* ---------- cron ---------- */

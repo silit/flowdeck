@@ -39,9 +39,11 @@ function exec(cmd) {
     default: throw new Error('mock redis: unsupported ' + c);
   }
 }
+let redisCalls = 0; // commands received, to prove which requests never reach the database
 const redis = http.createServer(async (req, res) => {
   const body = await readJSON(req);
   const u = new URL(req.url, 'http://x');
+  redisCalls += u.pathname === '/pipeline' && Array.isArray(body) ? body.length : 1;
   if (u.pathname === '/pipeline') return json(res, 200, body.map((cmd) => { try { return { result: exec(cmd) }; } catch (e) { return { error: e.message }; } }));
   try { json(res, 200, { result: exec(body) }); } catch (e) { json(res, 400, { error: e.message }); }
 });
@@ -65,6 +67,7 @@ const webflow = http.createServer(async (req, res) => {
   const body = await readJSON(req);
   const u = new URL(req.url, 'http://x');
   if (u.pathname === '/oauth/access_token') {
+    wfState.tokenCalls = (wfState.tokenCalls || 0) + 1;
     if (!['good-code', 'install-code'].includes(body.code) || body.client_id !== 'cid' || body.client_secret !== 'sec') return json(res, 400, { error: 'invalid_grant' });
     // like Webflow: redirect_uri must be sent exactly when the authorization link had one
     // (good-code comes from our /auth link with redirect_uri, install-code from the Marketplace link without it)
@@ -552,6 +555,49 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
   assert(ref.status === 302 && refPage && refPage.body.includes('Webflow refused access') && JSON.parse(db.get('user:user_1')).siteIds.length === sitesBefore, 'Refresh tells the user when Webflow refuses access and keeps the data on the first refusal');
   wfState.revoked = false;
   process.env.REVOKE_CONFIRM_MS = '0';
+
+  console.log('11. cost guards: floods on public addresses never reach the database or Webflow');
+  const from = (ip, method, p, extra) => request(port, method, p, Object.assign({}, extra || {}, { headers: Object.assign({ 'X-Forwarded-For': ip }, (extra && extra.headers) || {}) }));
+  const rTok = 'AbCdEfGh12345678';
+  db.set('user:cg_user', JSON.stringify({ id: 'cg_user', email: 'cg@agency.com', settings: { brand: 'CG Agency', alerts: true, digest: true }, connections: [], siteIds: ['cgSite'] }));
+  db.set('site:cgSite', JSON.stringify({ id: 'cgSite', userId: 'cg_user', name: 'CG Site', url: 'https://cg.example', domains: [], monitored: false, settings: { reportToken: rTok, client: '', plan: 'unknown', alerts: true, checkUrl: '' }, status: {}, data: null }));
+  db.set('report:' + rTok, JSON.stringify({ siteId: 'cgSite' }));
+
+  const repOk = await from('192.0.2.10', 'GET', '/r/' + rTok);
+  assert(repOk.status === 200 && /s-maxage=60/.test(repOk.headers['cache-control']) && /max-age=0/.test(repOk.headers['cache-control']) && repOk.headers['x-robots-tag'] === 'noindex', 'a report may stay on the CDN for one minute and is still noindex');
+  let c0 = redisCalls;
+  const badShapes = [await from('192.0.2.10', 'GET', '/r/abc'), await from('192.0.2.10', 'GET', '/r/' + 'a'.repeat(100)), await from('192.0.2.10', 'GET', '/r/abc%24def%21ghijkl')];
+  assert(badShapes.every((r) => r.status === 404 && r.headers['cache-control'] === 'no-store') && redisCalls === c0, 'report links of an impossible shape get 404 without a database read');
+  for (let i = 0; i < 60; i++) await from('192.0.2.11', 'GET', '/r/unknownTOKEN' + String(1000 + i));
+  c0 = redisCalls;
+  const flood = [];
+  for (let i = 0; i < 5; i++) flood.push(await from('192.0.2.11', 'GET', '/r/unknownTOKEN' + String(2000 + i)));
+  assert(flood.every((r) => r.status === 429 && r.headers['retry-after'] === '60') && redisCalls === c0, 'more than 60 report requests a minute from one address get 429 and no database read');
+  const other = await from('192.0.2.12', 'GET', '/r/' + rTok);
+  assert(other.status === 200, 'another address still sees the report');
+
+  c0 = redisCalls;
+  const badLink = await from('192.0.2.13', 'GET', '/l/short');
+  assert(badLink.status === 400 && badLink.body.includes('Link expired') && redisCalls === c0, 'sign in links of an impossible shape are answered without a database read');
+  for (let i = 0; i < 30; i++) await from('192.0.2.13', 'GET', '/l/' + 'x'.repeat(28) + String(1000 + i)); // the impossible shape above is not counted
+  c0 = redisCalls;
+  const linkFlood = await from('192.0.2.13', 'GET', '/l/' + 'x'.repeat(28) + '9999');
+  assert(linkFlood.status === 429 && redisCalls === c0, 'more than 30 sign in link requests a minute from one address get 429 and no database read');
+
+  const t0 = wfState.tokenCalls || 0;
+  const longCode = await from('192.0.2.14', 'GET', '/callback?code=' + 'x'.repeat(600));
+  assert(longCode.status === 400 && (wfState.tokenCalls || 0) === t0, 'an over-long authorization code is refused without asking Webflow');
+  for (let i = 0; i < 20; i++) await from('192.0.2.14', 'GET', '/callback?code=bad' + i); // the over-long code above is not counted
+  const t1 = wfState.tokenCalls || 0;
+  const cbFlood = await from('192.0.2.14', 'GET', '/callback?code=bad-again');
+  assert(t1 > t0 && cbFlood.status === 429 && (wfState.tokenCalls || 0) === t1, 'more than 20 callbacks a minute from one address get 429 and Webflow is not asked');
+
+  for (let i = 0; i < 30; i++) await from('192.0.2.15', 'POST', '/login', { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form({ email: 'flood' + i + '@example.com' }) });
+  c0 = redisCalls;
+  const loginFlood = [];
+  for (let i = 0; i < 5; i++) loginFlood.push(await from('192.0.2.15', 'POST', '/login', { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form({ email: 'flood-more' + i + '@example.com' }) }));
+  assert(loginFlood.every((r) => r.status === 302 && r.headers.location === '/login?sent=1') && redisCalls === c0, 'a sign in flood from one address gets the usual answer without touching the database');
+  ['user:cg_user', 'site:cgSite', 'report:' + rTok].forEach((k) => db.delete(k));
 
   console.log(`\n${passed} passed, ${failed} failed`);
   [redis, siteA, siteB, resend, webflow, app].forEach((s) => s.close());
