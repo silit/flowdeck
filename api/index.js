@@ -365,7 +365,7 @@ async function handleCheckout(req, res, user) {
 }
 
 async function handlePortal(req, res, user) {
-  const url = await billing.portalUrl(user);
+  const url = await billing.portalUrl(user, ENV().appUrl);
   if (!url) return redirect(res, '/app/settings#plan');
   redirect(res, url);
 }
@@ -386,7 +386,7 @@ async function handleSettingsPage(req, res, user) {
   const q = queryOf(req);
   const sites = await store.getSites(user.siteIds || []);
   const notice = q.upgraded ? 'Thanks! Your plan updates as soon as the payment is confirmed, usually within a minute.' : (q.saved ? 'Settings saved.' : html.esc(noticeFrom(q, user)));
-  send(res, 200, html.settings(user, sites, notice, { billing: await billing.canCheckout(user) }));
+  send(res, 200, html.settings(user, sites, notice, { billing: await billing.canCheckout(user), providerName: billing.providerName() }));
 }
 
 async function handleSettingsSave(req, res, user) {

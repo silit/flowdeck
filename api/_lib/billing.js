@@ -1,6 +1,9 @@
 'use strict';
-// Paid plans through Lemon Squeezy (merchant of record).
-// Env: LEMONSQUEEZY_API_KEY, LEMONSQUEEZY_STORE_ID, LEMONSQUEEZY_WEBHOOK_SECRET
+// Paid plans. Two merchant-of-record providers:
+// - Polar (polar.js): used as soon as POLAR_ACCESS_TOKEN is set.
+// - Lemon Squeezy (this file): the fallback. BILLING_PROVIDER=lemonsqueezy forces it, BILLING_PROVIDER=polar forces Polar.
+// A subscription is always managed (portal, cancel) by the provider it was bought with (user.billing.provider).
+// Lemon Squeezy env: LEMONSQUEEZY_API_KEY, LEMONSQUEEZY_STORE_ID, LEMONSQUEEZY_WEBHOOK_SECRET
 // Products/variants in the store are matched by name: "<product> <variant>" must contain
 // the plan name (Solo, Studio, Agency) and "year" or "annual" for yearly variants.
 const crypto = require('crypto');
@@ -21,7 +24,18 @@ function cfg() {
     base: (process.env.LEMONSQUEEZY_API_BASE || 'https://api.lemonsqueezy.com').replace(/\/+$/, '')
   };
 }
-function enabled() { const c = cfg(); return !!(c.key && c.store); }
+function lsEnabled() { const c = cfg(); return !!(c.key && c.store); }
+function enabled() { return provider() === 'polar' ? polar.enabled() : lsEnabled(); }
+
+function provider() {
+  const p = String(process.env.BILLING_PROVIDER || '').trim().toLowerCase();
+  if (p === 'polar') return 'polar';
+  if (p === 'lemonsqueezy' || p === 'lemon') return 'lemonsqueezy';
+  return polar.enabled() ? 'polar' : 'lemonsqueezy';
+}
+function providerName() { return provider() === 'polar' ? 'Polar' : 'Lemon Squeezy'; }
+// Old records have no provider field: those came from Lemon Squeezy
+function subProvider(user) { return (user && user.billing && user.billing.provider) === 'polar' ? 'polar' : 'lemonsqueezy'; }
 
 async function api(method, path, body) {
   const c = cfg();
@@ -82,7 +96,8 @@ function isTester(user) {
 
 // 'live' when real plans can be sold, 'test' when only test-mode variants exist, 'off' otherwise.
 async function mode() {
-  if (!enabled()) return 'off';
+  if (provider() === 'polar') return polar.mode();
+  if (!lsEnabled()) return 'off';
   try {
     const map = await Promise.race([variants(), new Promise((_, no) => setTimeout(() => no(new Error('timeout')), 4000))]);
     if (!Object.keys(map).some((k) => !k.startsWith('_'))) return 'off';
@@ -103,6 +118,7 @@ function sign(userId) {
 }
 
 async function checkoutUrl(user, plan, interval, appUrl) {
+  if (provider() === 'polar') return polar.checkoutUrl(user, plan, interval, appUrl);
   if (!PLANS[plan]) throw new Error('Unknown plan');
   interval = interval === 'yearly' ? 'yearly' : 'monthly';
   const map = await variants();
@@ -140,6 +156,7 @@ function apply(user, sub) {
   const endsAt = a.ends_at ? Date.parse(a.ends_at) : null;
   const stillPaid = ACTIVE.includes(a.status) || (a.status === 'cancelled' && endsAt && endsAt > Date.now());
   user.billing = {
+    provider: 'lemonsqueezy',
     lsUpdatedAt: a.updated_at || null,
     subscriptionId: String(sub.id),
     status: a.status || '',
@@ -199,9 +216,10 @@ function hasLiveSubscription(user) {
   return false;
 }
 
-// Cancels the subscription at Lemon Squeezy (it stays active until the end of the paid period).
+// Cancels the subscription at its provider (it stays active until the end of the paid period).
 async function cancelSubscription(user) {
   if (!hasLiveSubscription(user)) return true;
+  if (subProvider(user) === 'polar') return polar.cancelSubscription(user);
   try {
     await api('DELETE', '/v1/subscriptions/' + encodeURIComponent(user.billing.subscriptionId));
   } catch (e) {
@@ -212,12 +230,17 @@ async function cancelSubscription(user) {
 }
 
 // Fresh customer portal link (signed links expire after 24 hours).
-async function portalUrl(user) {
+async function portalUrl(user, appUrl) {
   if (!user.billing || !user.billing.subscriptionId) return '';
+  if (subProvider(user) === 'polar') return polar.portalUrl(user, appUrl);
   try {
     const d = await api('GET', '/v1/subscriptions/' + encodeURIComponent(user.billing.subscriptionId));
     return (d.data && d.data.attributes && d.data.attributes.urls && d.data.attributes.urls.customer_portal) || user.billing.portalUrl || '';
   } catch (e) { return user.billing.portalUrl || ''; }
 }
 
-module.exports = { PLANS, enabled, mode, canCheckout, isTester, hasLiveSubscription, cancelSubscription, planFromNames, checkoutUrl, verify, apply, handleWebhook, portalUrl, sign, _reset: () => { variantCache = null; } };
+// Polar shares the plan table, the status words, the signature and the tester list with this file
+const polar = require('./polar')({ PLANS, ACTIVE, sign, isTester, kv });
+const handlePolarWebhook = (raw, headers, deps) => polar.handleWebhook(raw, headers, deps);
+
+module.exports = { PLANS, enabled, provider, providerName, mode, canCheckout, isTester, hasLiveSubscription, cancelSubscription, planFromNames, checkoutUrl, verify, apply, handleWebhook, handlePolarWebhook, portalUrl, sign, polar, _reset: () => { variantCache = null; polar._reset(); } };

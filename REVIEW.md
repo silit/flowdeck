@@ -20,8 +20,9 @@ api/_lib/checks.js     HTTP uptime and TLS certificate checks against the publis
 api/_lib/alerts.js     alert rules (down, SSL, unpublished changes, silent forms)
 api/_lib/jobs.js       scheduled jobs: checks every 5 min, sync every 15 min, weekly digest
 api/_lib/crypto.js     encrypts the stored OAuth token and the session cookie
-api/_lib/billing.js    Lemon Squeezy checkout and plan limits
-api/billing-webhook.mjs  Lemon Squeezy webhook
+api/_lib/billing.js    plan limits, provider switch, Lemon Squeezy checkout (fallback)
+api/_lib/polar.js      Polar checkout, portal, cancel and webhook (Standard Webhooks)
+api/billing-webhook.mjs  payment webhook (Polar or Lemon Squeezy, by signature header)
 public/                landing, docs, privacy, terms
 test/app.js            end to end test with mock Webflow, Redis, email and customer sites (node test/app.js)
 vercel.json            routes and function settings

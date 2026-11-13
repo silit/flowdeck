@@ -337,6 +337,144 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
   require('../api/_lib/billing')._reset();
   ls.close();
 
+  console.log('6a. plans and billing (Polar)');
+  const pCalls = [];
+  const polarProducts = [
+    // another Silit Labs product in the same Polar organization, listed first: must never be picked
+    { id: 'p-other', name: 'Clinic Kit Pro Monthly', recurring_interval: 'month', is_recurring: true, metadata: { plan: 'studio' } },
+    { id: 'p-solo-m', name: 'Flowdeck Solo Monthly', recurring_interval: 'month', is_recurring: true, metadata: { plan: 'solo', sites: 5 } },
+    { id: 'p-studio-m', name: 'Flowdeck Studio Monthly', recurring_interval: 'month', is_recurring: true, metadata: { plan: 'studio', sites: 15 } },
+    { id: 'p-agency-m', name: 'Flowdeck Agency Monthly', recurring_interval: 'month', is_recurring: true, metadata: { plan: 'agency', sites: 40 } },
+    { id: 'p-solo-y', name: 'Flowdeck Solo Yearly', recurring_interval: 'year', is_recurring: true, metadata: { plan: 'solo', sites: 5 } },
+    { id: 'p-studio-y', name: 'Flowdeck Studio Yearly', recurring_interval: 'year', is_recurring: true, metadata: { plan: 'studio', sites: 15 } },
+    { id: 'p-agency-y', name: 'Flowdeck Agency Yearly', recurring_interval: 'year', is_recurring: true, metadata: { plan: 'agency', sites: 40 } }
+  ];
+  const pol = http.createServer(async (req, res) => {
+    const u = new URL(req.url, 'http://x');
+    const path = u.pathname.replace(/^\/sandbox/, '');
+    const body = ['POST', 'PATCH'].includes(req.method) ? await readJSON(req) : null;
+    pCalls.push({ method: req.method, path, search: u.search, body, auth: req.headers.authorization, version: req.headers['polar-version'] });
+    if (req.method === 'GET' && path === '/v1/products/') return json(res, 200, { items: polarProducts, pagination: { total_count: polarProducts.length, max_page: 1 } });
+    if (req.method === 'POST' && path === '/v1/checkouts/') return json(res, 201, { id: 'co1', status: 'open', url: 'https://buy.polar.sh/polar_c_abc' });
+    if (req.method === 'POST' && path === '/v1/customer-sessions/') return json(res, 201, { id: 'cs1', customer_id: body.customer_id, customer_portal_url: 'https://polar.sh/silitlabs/portal?customer_session_token=fresh' });
+    if (req.method === 'PATCH' && path === '/v1/subscriptions/gone') return json(res, 404, { error: 'ResourceNotFound', detail: 'Not found' });
+    if (req.method === 'PATCH' && path === '/v1/subscriptions/done') return json(res, 403, { error: 'AlreadyCanceledSubscription', detail: 'This subscription is already canceled or will be at the end of the period.' });
+    if (req.method === 'PATCH' && path === '/v1/subscriptions/broken') return json(res, 500, { detail: 'server error' });
+    if (req.method === 'PATCH' && path.startsWith('/v1/subscriptions/')) return json(res, 200, { id: path.split('/').pop(), status: 'active', cancel_at_period_end: true });
+    json(res, 404, { detail: 'Not found' });
+  });
+  const polPort = await listen(pol);
+  const polarSecret = 'whsec_' + crypto.randomBytes(24).toString('base64');
+  Object.assign(process.env, { POLAR_ACCESS_TOKEN: 'polar_oat_test', POLAR_WEBHOOK_SECRET: polarSecret, POLAR_API_BASE: 'http://127.0.0.1:' + polPort });
+  billingMod._reset();
+  assert(billingMod.provider() === 'polar' && billingMod.providerName() === 'Polar', 'a Polar access token switches payments to Polar');
+  process.env.BILLING_PROVIDER = 'lemonsqueezy';
+  assert(billingMod.provider() === 'lemonsqueezy', 'BILLING_PROVIDER=lemonsqueezy keeps Lemon Squeezy even with a Polar token');
+  delete process.env.BILLING_PROVIDER;
+
+  const polPage = await request(port, 'GET', '/app/settings', { headers: { Cookie: session } });
+  assert(polPage.body.includes('/app/billing/checkout') && polPage.body.includes('Payments are handled by Polar'), 'settings shows Polar checkout buttons');
+  const pco = await post('/app/billing/checkout', { plan: 'studio', interval: 'yearly' });
+  const pCo = pCalls.find((c) => c.path === '/v1/checkouts/');
+  const pList = pCalls.find((c) => c.path === '/v1/products/');
+  assert(pco.status === 302 && pco.headers.location === 'https://buy.polar.sh/polar_c_abc', 'checkout redirects to Polar');
+  assert(pCo && pCo.auth === 'Bearer polar_oat_test' && pCo.version === '2026-10' && pList && /is_archived=false/.test(pList.search), 'Polar calls carry the token and the pinned API version, archived products are skipped');
+  assert(pCo.body.products.length === 1 && pCo.body.products[0] === 'p-studio-y', 'checkout uses the Flowdeck Studio Yearly product, not another product with the same plan metadata');
+  assert(pCo.body.metadata.user_id === 'user_1' && pCo.body.metadata.sig === billingMod.sign('user_1') && pCo.body.success_url === 'https://app.test/app/settings?upgraded=1' && pCo.body.return_url === 'https://app.test/app/settings#plan' && pCo.body.customer_email === 'owner@agency.com', 'checkout carries the signed user id, the return links and the email');
+  const psig = pCo.body.metadata.sig;
+
+  const swSign = (id, ts, raw, key) => 'v1,' + crypto.createHmac('sha256', key).update(`${id}.${ts}.${raw}`).digest('base64');
+  let evtN = 0;
+  const sendPolar = async (evt, opts = {}) => {
+    const raw = JSON.stringify(evt);
+    const id = 'msg_' + (++evtN);
+    const ts = opts.ts || Math.floor(Date.now() / 1000);
+    const key = opts.key || Buffer.from(polarSecret.slice(6), 'base64');
+    const r = await hook.POST(new Request('https://app.test/billing/webhook', { method: 'POST', headers: { 'webhook-id': id, 'webhook-timestamp': String(ts), 'webhook-signature': swSign(id, ts, raw, key), 'content-type': 'application/json' }, body: raw }));
+    return { status: r.status, body: await r.json() };
+  };
+  const prod = (id) => polarProducts.find((p) => p.id === id);
+  let pmod = now;
+  const psub = (status, productId, extra) => Object.assign({
+    id: 'ps_1', status, cancel_at_period_end: false, current_period_start: iso(now), current_period_end: iso(now + 365 * DAY), ends_at: null, ended_at: null,
+    customer_id: 'cust_1', customer: { id: 'cust_1', email: 'owner@agency.com', external_id: null }, product_id: productId, product: prod(productId),
+    recurring_interval: prod(productId).recurring_interval, metadata: { user_id: 'user_1', sig: psig, app: 'flowdeck' }, created_at: iso(now - 1000), modified_at: iso(pmod += 1000)
+  }, extra || {});
+  const pevt = (type, data) => ({ type, timestamp: iso(Date.now()), api_version: '2026-10', data });
+
+  let pw = await sendPolar(pevt('subscription.created', psub('active', 'p-studio-y')), { key: Buffer.from('not the secret') });
+  assert(pw.status === 401, 'Polar webhook with a bad signature is rejected');
+  pw = await sendPolar(pevt('subscription.created', psub('active', 'p-studio-y')), { ts: Math.floor(Date.now() / 1000) - 600 });
+  assert(pw.status === 401, 'Polar webhook older than 5 minutes is rejected (replay)');
+  pw = await sendPolar(pevt('subscription.created', psub('active', 'p-agency-m', { id: 'ps_forged', metadata: { user_id: 'user_1', sig: 'forged' } })));
+  assert(pw.status === 202 && pw.body.ignored === 'no user' && JSON.parse(db.get('user:user_1')).plan === 'free', 'Polar webhook with a forged user id is ignored');
+  pw = await sendPolar(pevt('subscription.created', psub('active', 'p-other', { id: 'ps_other' })));
+  assert(pw.status === 202 && pw.body.ignored === 'not a Flowdeck product' && JSON.parse(db.get('user:user_1')).plan === 'free', 'events for other Silit Labs products are ignored');
+  pw = await sendPolar(pevt('order.paid', { id: 'ord_1' }));
+  assert(pw.status === 202 && pw.body.ignored === 'order.paid', 'non-subscription events are acknowledged and ignored');
+  pw = await sendPolar(pevt('subscription.created', psub('active', 'p-studio-y')));
+  let pu = JSON.parse(db.get('user:user_1'));
+  assert(pw.status === 200 && pu.plan === 'studio' && pu.billing.provider === 'polar' && pu.billing.interval === 'yearly' && pu.billing.subscriptionId === 'ps_1' && pu.billing.customerId === 'cust_1', 'subscription.created upgrades the user to Studio through Polar');
+  assert(JSON.parse(db.get('site:siteC')).monitored, 'paused third site is monitored after the Polar upgrade');
+  pw = await sendPolar(pevt('subscription.active', psub('active', 'p-studio-y')), { key: Buffer.from(polarSecret, 'utf8') });
+  assert(pw.status === 200 && pw.body.ok, 'a secret made before 8 Sep 2026 (whole whsec string as the key) is accepted too');
+
+  const ppor = await request(port, 'GET', '/app/billing/portal', { headers: { Cookie: session } });
+  const pSess = pCalls.filter((c) => c.path === '/v1/customer-sessions/').pop();
+  assert(ppor.status === 302 && ppor.headers.location === 'https://polar.sh/silitlabs/portal?customer_session_token=fresh' && pSess.body.customer_id === 'cust_1' && pSess.body.return_url === 'https://app.test/app/settings#plan', 'Manage billing opens a fresh signed-in Polar portal');
+
+  pw = await sendPolar(pevt('subscription.canceled', psub('active', 'p-studio-y', { cancel_at_period_end: true, canceled_at: iso(now), ends_at: iso(now + 30 * DAY) })));
+  pu = JSON.parse(db.get('user:user_1'));
+  const cancPage = await request(port, 'GET', '/app/settings', { headers: { Cookie: session } });
+  assert(pu.plan === 'studio' && pu.billing.status === 'cancelled' && cancPage.body.includes('Cancelled, active until'), 'cancelled at period end keeps the plan and says until when');
+  assert(!billingMod.hasLiveSubscription(pu), 'a subscription already cancelled at period end is not cancelled again on account deletion');
+  const lateRevoke = pevt('subscription.revoked', psub('canceled', 'p-studio-y', { ended_at: iso(now), modified_at: iso(now - 5000) }));
+  pw = await sendPolar(lateRevoke);
+  assert(pw.body.ignored === 'stale event' && JSON.parse(db.get('user:user_1')).plan === 'studio', 'a late, older Polar webhook does not overwrite a newer one');
+  pw = await sendPolar(pevt('subscription.uncanceled', psub('active', 'p-studio-y')));
+  pu = JSON.parse(db.get('user:user_1'));
+  assert(pu.plan === 'studio' && pu.billing.status === 'active' && pu.billing.renewsAt, 'uncancelled subscription renews again');
+  pw = await sendPolar(pevt('subscription.past_due', psub('past_due', 'p-studio-y')));
+  const pdPage = await request(port, 'GET', '/app/settings', { headers: { Cookie: session } });
+  assert(JSON.parse(db.get('user:user_1')).plan === 'studio' && pdPage.body.includes('payment failed'), 'past due keeps the plan and asks for a new card');
+  pw = await sendPolar(pevt('subscription.updated', psub('active', 'p-agency-m')));
+  pu = JSON.parse(db.get('user:user_1'));
+  assert(pu.plan === 'agency' && pu.billing.interval === 'monthly', 'a plan change in the Polar portal moves the user to the new plan');
+  pw = await sendPolar(pevt('subscription.revoked', psub('canceled', 'p-agency-m', { ended_at: iso(now), ends_at: iso(now) })));
+  pu = JSON.parse(db.get('user:user_1'));
+  const monitoredP = ['siteA', 'siteB', 'siteC'].filter((id) => JSON.parse(db.get('site:' + id)).monitored);
+  assert(pu.plan === 'free' && pu.billing.status === 'expired' && monitoredP.length === 2 && !monitoredP.includes('siteC'), 'revoked subscription drops to free and pauses the newest site');
+
+  const pBefore = pCalls.length;
+  await billingMod.cancelSubscription({ billing: { provider: 'polar', subscriptionId: 'ps_9', status: 'active' } });
+  const pPatch = pCalls.slice(pBefore).find((c) => c.method === 'PATCH');
+  assert(pPatch && pPatch.path === '/v1/subscriptions/ps_9' && pPatch.body.cancel_at_period_end === true, 'deleting the account cancels the Polar subscription at period end');
+  const pGone = await billingMod.cancelSubscription({ billing: { provider: 'polar', subscriptionId: 'gone', status: 'active' } }).then(() => true, () => false);
+  const pDone = await billingMod.cancelSubscription({ billing: { provider: 'polar', subscriptionId: 'done', status: 'active' } }).then(() => true, () => false);
+  const pBroken = await billingMod.cancelSubscription({ billing: { provider: 'polar', subscriptionId: 'broken', status: 'active' } }).then(() => true, () => false);
+  assert(pGone && pDone && !pBroken, 'a Polar subscription already gone or already cancelled counts as cancelled; a server error stops the deletion');
+  const lsBefore2 = lsCalls.length;
+  const lsRec = await billingMod.cancelSubscription({ billing: { subscriptionId: 'old-ls', status: 'active' } }).then(() => true, () => false);
+  assert(!lsRec && lsCalls.length === lsBefore2 && !pCalls.some((c) => c.path.includes('old-ls')), 'an old Lemon Squeezy subscription is never sent to Polar');
+
+  // Polar sandbox: only testers can buy, sandbox payments never change a real user's plan
+  process.env.POLAR_API_BASE = 'http://127.0.0.1:' + polPort + '/sandbox';
+  billingMod._reset();
+  const sbPage = await request(port, 'GET', '/app/settings', { headers: { Cookie: session } });
+  assert(!sbPage.body.includes('/app/billing/checkout') && sbPage.body.includes('Paid plans are opening shortly'), 'Polar sandbox hides checkout buttons from users');
+  const sbCo = await post('/app/billing/checkout', { plan: 'solo', interval: 'monthly' });
+  assert(sbCo.status === 503, 'Polar sandbox checkout is refused for users');
+  pw = await sendPolar(pevt('subscription.created', psub('active', 'p-solo-m', { id: 'ps_sb' })));
+  assert(pw.body.ignored === 'test mode' && JSON.parse(db.get('user:user_1')).plan === 'free', 'Polar sandbox payment does not upgrade a real user');
+  process.env.BILLING_TEST_EMAILS = 'owner@agency.com';
+  const sbTester = await post('/app/billing/checkout', { plan: 'solo', interval: 'monthly' });
+  assert(sbTester.status === 302 && sbTester.headers.location === 'https://buy.polar.sh/polar_c_abc', 'tester can buy in the Polar sandbox');
+  delete process.env.BILLING_TEST_EMAILS;
+
+  ['POLAR_ACCESS_TOKEN', 'POLAR_WEBHOOK_SECRET', 'POLAR_API_BASE'].forEach((k) => delete process.env[k]);
+  billingMod._reset();
+  pol.close();
+
   console.log('6b. install from the Marketplace link (no state, no redirect_uri) signs in');
   const inst = await request(port, 'GET', '/callback?code=install-code');
   assert(inst.status === 302 && inst.headers.location.startsWith('/app') && /fd_session=/.test(cookiesFrom(inst)), 'Marketplace install callback reaches the dashboard');

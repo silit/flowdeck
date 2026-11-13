@@ -296,7 +296,7 @@ function planPanel(user, sites, limit, opts) {
   }).join('');
   const manage = paid && b.subscriptionId ? `<div class="actions" style="margin-top:10px"><a class="btn sm" href="/app/billing/portal">Manage billing, invoices or cancel</a></div>` : '';
   const note = paid ? '<p class="muted small" style="margin-top:10px">To change plans, use Manage billing. Need more than 40 sites? Write to info@silitlabs.com.</p>'
-    : `<p class="muted small" style="margin-top:10px">${opts.billing ? 'Yearly plans include two months free. Payments are handled by Lemon Squeezy; cancel any time.' : 'Paid plans are opening shortly.'} Need more than 40 sites? Write to info@silitlabs.com.</p>`;
+    : `<p class="muted small" style="margin-top:10px">${opts.billing ? `Yearly plans include two months free. Payments are handled by ${esc(opts.providerName || 'Lemon Squeezy')}; cancel any time.` : 'Paid plans are opening shortly.'} Need more than 40 sites? Write to info@silitlabs.com.</p>`;
   return `<div class="panel" id="plan"><h3>Plan</h3>${current}${status}<ul class="issues plans" style="margin-top:8px"><li><span><strong>Free</strong> · 1 site</span><span>${user.plan === 'free' || !user.plan ? '<span class="pill ok">Current</span>' : ''}</span></li>${rows}</ul>${manage}${note}</div>`;
 }
 
