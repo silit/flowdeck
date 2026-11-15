@@ -19,6 +19,9 @@ api/_lib/sync.js       reads page SEO fields, form submission dates and CMS item
 api/_lib/checks.js     HTTP uptime and TLS certificate checks against the published site
 api/_lib/alerts.js     alert rules (down, SSL, unpublished changes, silent forms)
 api/_lib/jobs.js       scheduled jobs: checks every 5 min, sync every 15 min, weekly digest
+api/_lib/attention.js  what needs attention now, ranked by impact (dashboard, site page, weekly email)
+api/_lib/emails.js     every email Flowdeck sends: alert opened and resolved, weekly report, sign in link (HTML and text)
+api/_lib/html.js       server-rendered pages
 api/_lib/crypto.js     encrypts the stored OAuth token and the session cookie
 api/_lib/billing.js    plan limits, provider switch, Lemon Squeezy checkout (fallback)
 api/_lib/polar.js      Polar checkout, portal, cancel and webhook (Standard Webhooks)

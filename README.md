@@ -15,9 +15,11 @@ api/_lib/sync.js      Webflow verisi: sayfalar (SEO), formlar (7/30 gün), CMS s
 api/_lib/alerts.js    kurallar: down, ssl, unpublished, forms_silent; bir kez aç, bir kez kapat
 api/_lib/jobs.js      zamanlanmış işler: checks (5 dk), sync (15 dk), digest (pazartesi)
 api/_lib/email.js     Resend
+api/_lib/emails.js    tüm e-postalar (uyarı açıldı ve kapandı, haftalık özet, giriş linki): konu, HTML ve düz metin
+api/_lib/attention.js "Needs attention now" listesi: sitelerdeki sorunlar, etkisine göre sıralı (panel, site sayfası, haftalık özet)
 api/_lib/html.js      sunucuda üretilen sayfalar (panel, site detayı, rapor, ayarlar)
 public/               landing, privacy, terms, favicon
-test/app.js           uçtan uca test: sahte Webflow, sahte Redis, sahte Resend, sahte müşteri siteleri (37 test)
+test/app.js           uçtan uca test: sahte Webflow, sahte Redis, sahte Resend, sahte müşteri siteleri (172 test)
 assets/               logo (900 ve 256 px), Marketplace metinleri (listing.md)
 ```
 

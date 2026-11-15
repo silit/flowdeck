@@ -15,6 +15,7 @@ const { seal, open, random, timingEqual } = require('./_lib/crypto');
 const { syncSite } = require('./_lib/sync');
 const billing = require('./_lib/billing');
 const email = require('./_lib/email');
+const emails = require('./_lib/emails');
 const crypto = require('crypto');
 const net = require('net');
 
@@ -305,7 +306,9 @@ async function handleSitePage(req, res, user) {
   if (!site) return send(res, 404, html.errorPage('Site not found', 'That site is not connected to your account.'));
   const recent = await store.recentChecks(site.id);
   const notice = q.full ? `Your plan monitors up to ${user._limit} site${user._limit === 1 ? '' : 's'}. Pause another site or <a href="/app/settings#plan">upgrade</a>.` : (q.saved ? 'Settings saved.' : (q.synced ? 'Data refreshed from Webflow.' : html.esc(noticeFrom(q, user))));
-  send(res, 200, html.siteDetail(user, site, recent, Date.now(), notice));
+  // The sidebar lists every site with its state; a save or a full plan returns to the settings tab.
+  const sites = await store.getSites(user.siteIds || []);
+  send(res, 200, html.siteDetail(user, site, recent, Date.now(), notice, { sites, tab: q.full || q.saved ? 'settings' : '' }));
 }
 
 async function handleSiteSettings(req, res, user) {
@@ -316,7 +319,7 @@ async function handleSiteSettings(req, res, user) {
   site.settings.plan = ['unknown', 'basic', 'cms', 'business', 'enterprise'].includes(b.plan) ? b.plan : 'unknown';
   const url = String(b.checkUrl || '').trim();
   if (url && (url.length > 2048 || !checks.allowedCheckUrl(site, url))) {
-    return send(res, 400, html.errorPage('URL not allowed', 'The URL to check must be an https address on one of this site\'s own domains: ' + checks.siteHosts(site).join(', ') + '.', '/app/site?id=' + encodeURIComponent(site.id)));
+    return send(res, 400, html.errorPage('URL not allowed', 'The URL to check must be an https address on one of this site\'s own domains: ' + checks.siteHosts(site).join(', ') + '.', '/app/site?id=' + encodeURIComponent(site.id) + '#settings'));
   }
   site.settings.checkUrl = url;
   site.settings.alerts = b.alerts === '1' || b.alerts === 'on';
@@ -334,7 +337,7 @@ async function handleSiteReport(req, res, user) {
     await store.saveSite(site);
   }
   await store.ensureReportToken(site);
-  redirect(res, '/app/site?id=' + encodeURIComponent(site.id));
+  redirect(res, '/app/site?id=' + encodeURIComponent(site.id) + '#report'); // back on the report tab
 }
 
 async function handleSiteMonitor(req, res, user) {
@@ -386,7 +389,7 @@ async function handleSettingsPage(req, res, user) {
   const q = queryOf(req);
   const sites = await store.getSites(user.siteIds || []);
   const notice = q.upgraded ? 'Thanks! Your plan updates as soon as the payment is confirmed, usually within a minute.' : (q.saved ? 'Settings saved.' : html.esc(noticeFrom(q, user)));
-  send(res, 200, html.settings(user, sites, notice, { billing: await billing.canCheckout(user), providerName: billing.providerName() }));
+  send(res, 200, html.settings(user, sites, notice, { billing: await billing.canCheckout(user), providerName: billing.providerName(), tab: q.upgraded ? 'plan' : '' }));
 }
 
 async function handleSettingsSave(req, res, user) {
@@ -438,7 +441,7 @@ async function handleDisconnect(req, res, user) {
   await wf.revokeToken({ clientId: env.clientId, clientSecret: env.clientSecret, token: store.tokenOf(removed) });
   await store.saveUser(user);
   const n = removed._sites.length;
-  redirect(res, '/app/settings?' + noticeQuery(user, `Disconnected ${removed.label || 'Webflow'}: access revoked, token and ${n} site${n === 1 ? '' : 's'} deleted.`));
+  redirect(res, '/app/settings?' + noticeQuery(user, `Disconnected ${removed.label || 'Webflow'}: access revoked, token and ${n} site${n === 1 ? '' : 's'} deleted.`) + '#connections');
 }
 
 /* ---------- sign in by email link (returning users) ---------- */
@@ -475,9 +478,8 @@ async function handleLoginPost(req, res) {
       const t = await store.createLoginToken(user.id);
       const link = ENV().appUrl + '/l/' + t;
       try {
-        await email.send({ to: user.email, subject: 'Your Flowdeck sign in link',
-          html: `<div style="font-family:Segoe UI,Helvetica,Arial,sans-serif;color:#121a24"><p>Click to sign in to Flowdeck. The link works once and expires in 15 minutes.</p><p><a href="${html.esc(link)}" style="display:inline-block;background:#1f6feb;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;font-weight:600">Sign in to Flowdeck</a></p><p style="color:#5b6876;font-size:13px">If you did not ask for this, ignore this email.</p></div>`,
-          text: 'Sign in to Flowdeck (works once, expires in 15 minutes): ' + link });
+        const msg = emails.signIn(link);
+        await email.send({ to: user.email, subject: msg.subject, html: msg.html, text: msg.text });
       } catch (e) { console.error('[flowdeck] login email failed', e.message); }
     }
   }

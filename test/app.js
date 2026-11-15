@@ -188,35 +188,44 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
   let out = JSON.parse(r.body);
   assert(r.status === 200 && out.checked === 2, 'two monitored sites checked');
   let b = JSON.parse(db.get('site:siteB'));
-  const downMails = () => emails.filter((e) => e.subject.includes('is down'));
+  const downMails = () => emails.filter((e) => e.subject.startsWith('Down: '));
   assert(b.status.fails === 1 && b.status.up !== false && downMails().length === 0, 'one failure: not down yet, no down email');
   r = await request(port, 'GET', '/cron/checks?key=cronkey');
   b = JSON.parse(db.get('site:siteB'));
   assert(b.status.up === false && b.status.fails === 2, 'second failure marks the site down');
-  assert(downMails().length === 1 && downMails()[0].subject.includes('Blue Yachts is down') && downMails()[0].to[0] === 'owner@agency.com', 'down alert emailed once');
+  assert(downMails().length === 1 && downMails()[0].subject === 'Down: 127.0.0.1:' + bPort && downMails()[0].html.includes('Blue Yachts is down') && downMails()[0].to[0] === 'owner@agency.com', 'down alert emailed once');
+  const dm = downMails()[0];
+  assert((dm.html.match(/class="fd-btn"/g) || []).length === 1 && dm.html.includes('href="http://127.0.0.1:' + bPort + '"') && dm.text.startsWith('Blue Yachts is down\n') && dm.text.includes('failed 2 checks in a row') && dm.html.includes('failed 2 checks in a row') && dm.text.includes('Open 127.0.0.1:' + bPort + ': http://127.0.0.1:' + bPort) && dm.text.includes('https://app.test/app/site?id=siteB'), 'down email: first line says what happened and what to do, one button to the site, the text version says the same');
+  const dashDown = await request(port, 'GET', '/app', { headers: { Cookie: session } });
+  const attAt = dashDown.body.indexOf('Needs attention now');
+  const firstAtt = (dashDown.body.slice(attAt).match(/<li class="att-item (\w+)">[\s\S]*?<\/li>/) || []);
+  assert(attAt > -1 && attAt < dashDown.body.indexOf('All sites, most urgent first') && firstAtt[1] === 'bad' && firstAtt[0].includes('Blue Yachts') && firstAtt[0].includes('Site is down') && (firstAtt[0].match(/class="btn /g) || []).length === 1 && firstAtt[0].includes('class="btn sm primary"') && /class="count bad"[^]*?to fix/.test(dashDown.body), 'the dashboard opens with what needs attention: the down site first, with one button in the accent colour');
   r = await request(port, 'GET', '/cron/checks?key=cronkey');
   assert(downMails().length === 1, 'still down: no repeat email');
   siteBStatus = 200;
   r = await request(port, 'GET', '/cron/checks?key=cronkey');
   b = JSON.parse(db.get('site:siteB'));
-  const upMails = emails.filter((e) => e.subject.includes('back up'));
-  assert(b.status.up === true && upMails.length === 1, 'recovery marks up and emails once');
-  assert(!emails.some((e) => e.subject.includes('unpublished changes')), 'the checks job leaves the unpublished rule to the sync job');
+  const upMails = emails.filter((e) => e.subject.startsWith('Back up: '));
+  assert(b.status.up === true && upMails.length === 1 && upMails[0].subject === 'Back up: 127.0.0.1:' + bPort && (upMails[0].html.match(/class="fd-btn"/g) || []).length === 1 && upMails[0].text.startsWith('Blue Yachts is back up'), 'recovery marks up and emails once');
+  assert(!emails.some((e) => e.subject.startsWith('Unpublished for ')), 'the checks job leaves the unpublished rule to the sync job');
   const checksA = JSON.parse(db.get('site:siteA'));
   assert((db.get('uptime:siteA') || []).length === 5, 'uptime history stored (1 initial + 4 cron)');
 
   console.log('4. site detail, settings, client report');
   const detail = await request(port, 'GET', '/app/site?id=siteA', { headers: { Cookie: session } });
   assert(detail.status === 200 && detail.body.includes('Missing meta title') && detail.body.includes('Contact Form') && detail.body.includes('1,940'.replace(',', '')), 'detail page shows SEO issues, forms and CMS');
+  assert(['href="#checks"', 'href="#seo"', 'href="#report"', 'href="#settings"', 'action="/app/sync"', 'action="/app/site/settings"', 'action="/app/site/report"', 'action="/app/site/monitor"', 'action="/app/site/remove"', 'name="client"', 'name="plan"', 'name="checkUrl"', 'name="alerts"', 'Needs attention on this site', 'href="https://acme-dental.design.webflow.com"'].every((x) => detail.body.includes(x)), 'site page: details in tabs, needs attention first, every form, setting and button still there');
   const save = await request(port, 'POST', '/app/site/settings', { headers: { Cookie: session, 'Content-Type': 'application/x-www-form-urlencoded', Origin: 'https://app.test' }, body: form({ id: 'siteA', client: 'Acme Dental Clinic', plan: 'cms', checkUrl: '', alerts: '1' }) });
   assert(save.status === 302 && JSON.parse(db.get('site:siteA')).settings.plan === 'cms', 'settings saved');
+  const saved = await request(port, 'GET', save.headers.location, { headers: { Cookie: session } });
+  assert(saved.body.includes('data-default="settings"') && saved.body.includes('Settings saved.'), 'after saving, the site page opens on its settings tab');
   const dash2 = await request(port, 'GET', '/app', { headers: { Cookie: session } });
   assert(dash2.body.includes('1940 / 2000 (97%)'), 'CMS usage against the plan limit shows a warning');
   const foreign = await request(port, 'POST', '/app/site/settings', { headers: { Cookie: session, 'Content-Type': 'application/x-www-form-urlencoded', Origin: 'https://evil.test' }, body: form({ id: 'siteA', client: 'x' }) });
   assert(foreign.status === 403, 'cross-origin POST blocked');
   const rep = await request(port, 'POST', '/app/site/report', { headers: { Cookie: session, 'Content-Type': 'application/x-www-form-urlencoded', Origin: 'https://app.test' }, body: form({ id: 'siteA', action: 'create' }) });
   const tok = JSON.parse(db.get('site:siteA')).settings.reportToken;
-  assert(rep.status === 302 && tok, 'report token created');
+  assert(rep.status === 302 && tok && rep.headers.location === '/app/site?id=siteA#report', 'report token created, back on the report tab');
   const pub = await request(port, 'GET', '/r/' + tok);
   assert(pub.status === 200 && pub.body.includes('Acme Dental Clinic') && !pub.body.includes('Sign out') && pub.headers['x-robots-tag'] === 'noindex', 'public report renders without a session and is noindex');
   await request(port, 'POST', '/app/site/report', { headers: { Cookie: session, 'Content-Type': 'application/x-www-form-urlencoded', Origin: 'https://app.test' }, body: form({ id: 'siteA', action: 'rotate' }) });
@@ -231,11 +240,13 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
   const a2 = JSON.parse(db.get('site:siteA'));
   assert(a2.data.forms.total30 === 0 && a2.data.forms.before30 === 3, 'baseline kept for the silent-form rule');
   assert(emails.some((e) => e.subject.includes('No form submissions')), 'silent form alert fired');
-  const unpub = emails.find((e) => e.subject.includes('unpublished changes'));
-  assert(unpub && unpub.subject.includes('Blue Yachts'), 'unpublished-for-7-days alert fired for site B');
+  const unpub = emails.find((e) => e.subject.startsWith('Unpublished for '));
+  assert(unpub && /^Unpublished for \d+ days: 127\.0\.0\.1:\d+$/.test(unpub.subject) && unpub.subject.endsWith(':' + bPort) && unpub.html.includes('Blue Yachts has changes waiting to be published') && unpub.html.includes('https://blue-yachts.design.webflow.com'), 'unpublished-for-7-days alert fired for site B, with a button to the Designer');
   r = await request(port, 'GET', '/cron/digest?key=cronkey&force=1');
   out = JSON.parse(r.body);
   assert(out.sent === 1 && emails[emails.length - 1].subject.includes('Weekly report') && emails[emails.length - 1].html.includes('Acme Dental Clinic'), 'weekly digest sent with the site table');
+  const wk = emails[emails.length - 1];
+  assert(/^Weekly report: (all \d+ sites are fine|\d+ of \d+ sites need attention|your site (is fine|needs attention))$/.test(wk.subject) && (wk.html.match(/class="fd-btn"/g) || []).length === 1 && wk.html.includes('Needs attention, most urgent first') && wk.text.includes('Acme Dental Clinic') && wk.text.includes('Needs attention, most urgent first'), 'weekly email: the subject says the state, one button, the most urgent items first, in HTML and text');
   const weekly = () => emails.filter((e) => e.subject.includes('Weekly report')).length;
   const weeklyBefore = weekly();
   r = await request(port, 'GET', '/cron/digest?key=cronkey&force=1');
@@ -265,6 +276,7 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
   const post = (p, data) => request(port, 'POST', p, { headers: { Cookie: session, 'Content-Type': 'application/x-www-form-urlencoded', Origin: 'https://app.test' }, body: form(data) });
   const setPage = await request(port, 'GET', '/app/settings', { headers: { Cookie: session } });
   assert(setPage.body.includes('Studio</strong> · 15 sites') && setPage.body.includes('$24/mo') && setPage.body.includes('$240/yr'), 'settings lists paid plans with checkout buttons');
+  assert(['href="#alerts"', 'href="#plan"', 'href="#connections"', 'href="#account"', 'id="plan"', 'name="alertEmail"', 'name="brand"', 'name="alerts"', 'name="digest"', 'action="/app/billing/checkout"', 'action="/app/connection/remove"', 'action="/app/delete"', 'href="/auth"', 'href="/logout"'].every((x) => setPage.body.includes(x)), 'settings: sections in tabs, every setting, plan control and account action still there');
   const co = await post('/app/billing/checkout', { plan: 'studio', interval: 'yearly' });
   const coCall = lsCalls.find((c) => c.path === '/v1/checkouts');
   assert(co.status === 302 && co.headers.location === 'https://silit.lemonsqueezy.com/checkout/custom/abc', 'checkout redirects to Lemon Squeezy');
@@ -500,6 +512,7 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
   const mail = emails[emails.length - 1];
   const link = (mail && mail.text.match(/https:\/\/app\.test(\/l\/[\w-]+)/) || [])[1];
   assert(ask.status === 302 && emails.length === before + 1 && mail.to[0] === 'owner@agency.com' && !!link, 'sign in link emailed to the account email');
+  assert(mail.subject === 'Your Flowdeck sign in link' && (mail.html.match(/class="fd-btn"/g) || []).length === 1 && mail.html.includes('href="https://app.test' + link + '"') && mail.text.startsWith('Sign in to Flowdeck'), 'sign in email: one button with the link, and the link in the text version');
   const again = await request(port, 'POST', '/login', { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form({ email: 'owner@agency.com' }) });
   assert(again.status === 302 && emails.length === before + 1, 'one link per minute per address');
   const view = await request(port, 'GET', link);
@@ -604,7 +617,7 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
   const wait1 = await alertsMod.process(downSite, alertUser, Date.now());
   assert(fail2.some((x) => x.state === 'retry') && wait1.some((x) => x.type === 'down' && x.state === 'waiting') && !db.has('alert:siteZ:down'), 'an email the service refuses backs off instead of hammering it');
   const ok1 = await alertsMod.process(downSite, alertUser, Date.now() + 6 * 60000);
-  assert(ok1.some((x) => x.type === 'down' && x.state === 'opened') && db.has('alert:siteZ:down') && !db.has('alertfail:siteZ:down') && emails.slice(-1)[0].subject.includes('Zed is down'), 'the alert email goes out once the wait is over');
+  assert(ok1.some((x) => x.type === 'down' && x.state === 'opened') && db.has('alert:siteZ:down') && !db.has('alertfail:siteZ:down') && emails.slice(-1)[0].subject === 'Down: zed.test', 'the alert email goes out once the wait is over');
   // a check result never overwrites settings the user changed meanwhile
   const storeMod = require('../api/_lib/store');
   db.set('site:siteT', JSON.stringify({ id: 'siteT', name: 'T', url: 'https://t.test', monitored: true, settings: { client: 'Old' }, status: { code: 200 } }));
@@ -736,6 +749,59 @@ const cookiesFrom = (res) => (res.headers['set-cookie'] || []).map((c) => c.spli
   for (let i = 0; i < 5; i++) loginFlood.push(await from('192.0.2.15', 'POST', '/login', { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form({ email: 'flood-more' + i + '@example.com' }) }));
   assert(loginFlood.every((r) => r.status === 302 && r.headers.location === '/login?sent=1') && redisCalls === c0, 'a sign in flood from one address gets the usual answer without touching the database');
   ['user:cg_user', 'site:cgSite', 'report:' + rTok].forEach((k) => db.delete(k));
+
+  console.log('12. what needs attention, status marks and emails');
+  const attention = require('../api/_lib/attention');
+  const T = Date.now();
+  const okData = () => ({ pages: { live: 3, issues: 0, missingTitle: [], missingDesc: [], dupTitle: [], longTitle: [], longDesc: [] }, forms: { total7: 1, total30: 2, before30: 0, perForm: [] }, cms: { total: 10, collections: [] } });
+  const mk = (id, o) => Object.assign({ id, name: id + ' site', url: 'https://' + id + '.test', shortName: id, monitored: true, settings: { plan: 'cms', client: '', alerts: true }, status: { up: true, ms: 200, sslCheckedAt: T, sslExpiresAt: T + 90 * DAY }, lastPublished: iso(T - DAY), lastUpdated: iso(T - DAY), data: okData() }, o);
+  const demo = [
+    mk('seo', { data: Object.assign(okData(), { pages: { live: 3, issues: 2, missingTitle: [{ label: 'A', path: '/a' }], missingDesc: [{ label: 'B', path: '/b' }], dupTitle: [], longTitle: [], longDesc: [] } }) }),
+    mk('unpub', { lastPublished: iso(T - 10 * DAY), lastUpdated: iso(T - DAY) }),
+    mk('cms', { data: Object.assign(okData(), { cms: { total: 1900, collections: [] } }) }),
+    mk('forms', { data: Object.assign(okData(), { forms: { total7: 0, total30: 0, before30: 5, perForm: [] } }) }),
+    mk('ssl', { status: { up: true, sslCheckedAt: T, sslExpiresAt: T + 3 * DAY } }),
+    mk('down', { status: { up: false, fails: 3, code: 503, since: T - 600000, sslCheckedAt: T, sslExpiresAt: T + 90 * DAY } }),
+    mk('fine'),
+    mk('paused', { monitored: false })
+  ];
+  const ranked = attention.rank(demo, T, { limit: { max: 7, planName: 'Studio' } });
+  assert(ranked.map((i) => i.type).join(',') === 'down,ssl,forms_silent,cms,unpublished,limit,seo', 'needs attention is ranked by impact: down, SSL, silent forms, CMS near its limit, unpublished, plan limit, SEO gaps');
+  assert(attention.rank([mk('gone', { status: { up: false, fails: 2, code: 0, error: 'timeout', sslCheckedAt: T, sslExpiresAt: null } })], T).map((i) => i.type).join(',') === 'down', 'a site that does not answer at all is one item, not also an SSL item');
+  const html12 = require('../api/_lib/html');
+  const demoUser = { id: 'u', email: 'a@b.test', plan: 'studio', _limit: 7, settings: { alerts: true, digest: true, brand: '' }, connections: [], siteIds: demo.map((x) => x.id) };
+  const dash12 = html12.dashboard(demoUser, demo, {}, T, '');
+  const attItems = dash12.match(/<li class="att-item[\s\S]*?<\/li>/g) || [];
+  assert(attItems.length === 7 && attItems.every((li) => (li.match(/class="btn /g) || []).length === 1) && /class="btn sm primary"/.test(attItems[0]) && attItems.slice(1).every((li) => !/btn sm primary/.test(li)) && dash12.includes('Show all 7'), 'each item has one button; the urgent one uses the accent colour, the rest are outlined; the rest sit behind Show all');
+  assert(dash12.includes('href="https://unpub.design.webflow.com"') && dash12.includes('href="/app/site?id=seo#seo"') && dash12.includes('href="/app/settings#plan"'), 'each button leads where the problem is fixed: the Designer, the SEO tab, the plan');
+  const anyMark = dash12.match(/<span class="st /g) || [];
+  const goodMark = dash12.match(/<span class="st (ok|warn|bad|off)"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-\1"\/><\/svg>[^<]+<\/span>/g) || [];
+  assert(anyMark.length > 20 && goodMark.length === anyMark.length, 'every status mark has an icon of its own shape and a word');
+  assert(dash12.indexOf('aria-label="What the marks mean"') > -1 && dash12.indexOf('aria-label="What the marks mean"') < dash12.indexOf('<table class="tbl"') && ['OK', 'Needs a look', 'Down or broken', 'Waiting, paused or no data yet'].every((w) => dash12.includes('</svg>' + w + '</span>')), 'the legend is written out in words above the table');
+  const clear12 = html12.dashboard(demoUser, [mk('fine')], {}, T, '');
+  assert(clear12.includes('All clear') && !clear12.includes('class="att-item'), 'nothing to fix: the dashboard says so');
+  const site12 = html12.siteDetail(demoUser, demo[5], [], T, '', { sites: demo });
+  assert(/<li class="att-item bad">[\s\S]*?href="https:\/\/down\.test"[\s\S]*?Open the site/.test(site12) && site12.indexOf('Needs attention on this site') < site12.indexOf('data-tabs'), 'the site page opens with what needs attention on that site, before the tabs');
+  const emails12 = require('../api/_lib/emails');
+  const sent12 = [
+    emails12.alertOpened(demo[5], 'down', { fails: 3, code: 503, error: '' }, { now: T, to: 'a@b.test' }),
+    emails12.alertOpened(demo[4], 'ssl', { days: 3, expiresAt: T + 3 * DAY }, { now: T }),
+    emails12.alertOpened(mk('old', { status: { up: true, sslExpiresAt: T - DAY } }), 'ssl', { days: -1, expiresAt: T - DAY }, { now: T }),
+    emails12.alertOpened(demo[1], 'unpublished', { days: 10 }, { now: T }),
+    emails12.alertOpened(demo[3], 'forms_silent', { before: 5 }, { now: T }),
+    emails12.alertResolved(demo[5], 'down', { since: T - 1500000 }, { now: T }),
+    emails12.alertResolved(demo[4], 'ssl', { since: T - DAY }, { now: T }),
+    emails12.alertResolved(demo[1], 'unpublished', { since: T - DAY }, { now: T }),
+    emails12.alertResolved(demo[3], 'forms_silent', { since: T - DAY }, { now: T })
+  ];
+  assert(sent12.map((m) => m.subject).join(' | ') === 'Down: down.test | SSL expires in 3 days: ssl.test | SSL expired: old.test | Unpublished for 10 days: unpub.test | No form submissions for 30 days: forms.test | Back up: down.test | SSL renewed: ssl.test | Published: unpub.test | Forms active again: forms.test', 'alert subjects say the state and the site');
+  assert(sent12[5].text.includes('The alert was open for about 25 minutes'), 'the resolved email says how long the alert was open');
+  const allMail = emails.concat(sent12, [emails12.digest(demoUser, demo.filter((x) => x.monitored), T), emails12.signIn('https://app.test/l/abc')]);
+  assert(allMail.every((m) => m.html.startsWith('<!doctype html>') && m.html.includes('role="presentation"') && m.html.includes('max-width:600px') && m.html.includes('name="color-scheme"') && m.html.includes('prefers-color-scheme: dark') && (m.html.match(/class="fd-btn"/g) || []).length === 1 && m.text && m.text.length > 60), 'every email: table layout up to 600 px wide, dark mode colours, exactly one button and a text version');
+  assert(allMail.every((m) => { const first = m.text.split('\n').filter(Boolean)[1] || ''; return first.length > 20 && m.html.includes(first.replace(/&/g, '&amp;').replace(/'/g, '&#39;')); }), 'the first line under the title is the same in the HTML and the text version');
+  const pages12 = [dash, detail, setPage, lp, pub].map((r) => r.body).concat([dash12, site12, html12.report(demoUser, demo[0], [], T), html12.errorPage('Oops', 'Something broke.')]);
+  assert(!pages12.concat(allMail.map((m) => m.subject + m.html + m.text)).some((x) => /[\u2013\u2014\u0130]/.test(x)), 'no en or em dashes and no capital dotted I on any page or in any email');
+  assert(pages12.slice(0, 5).every((x) => x.includes('<main id="main"') && x.includes('class="skip"')), 'every page has a main landmark and a skip link');
 
   console.log(`\n${passed} passed, ${failed} failed`);
   [redis, siteA, siteB, resend, webflow, app].forEach((s) => s.close());

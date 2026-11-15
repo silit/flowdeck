@@ -7,7 +7,8 @@ const store = require('./store');
 const checks = require('./checks');
 const alerts = require('./alerts');
 const email = require('./email');
-const { syncSite, unpublishedDays, DAY } = require('./sync');
+const emails = require('./emails');
+const { syncSite, DAY } = require('./sync');
 
 const HOUR = 3600000;
 
@@ -161,23 +162,9 @@ async function runSync(now, batch) {
   }
 }
 
+// The weekly email's HTML (the whole message is built in emails.js). Kept for scripts/screenshots.js.
 function digestHtml(user, sites, now) {
-  const rows = sites.map((s) => {
-    const up7 = checks.summarize(s._checks || [], now - 7 * DAY);
-    const ud = unpublishedDays(s, now);
-    const seo = s.data && s.data.pages ? s.data.pages.issues : null;
-    const forms = s.data && s.data.forms ? s.data.forms : null;
-    const flags = [];
-    if (s.status && s.status.up === false) flags.push('DOWN');
-    if (ud != null && ud >= 7) flags.push(`unpublished ${ud}d`);
-    if (s.status && s.status.sslExpiresAt && (s.status.sslExpiresAt - now) / DAY <= 14) flags.push('SSL expiring');
-    return `<tr><td><strong>${esc(s.settings.client || s.name)}</strong><br><span style="color:#5d6f67;font-size:12px">${esc(s.url)}</span></td>
-<td>${up7.uptime == null ? '-' : up7.uptime + '%'}</td><td>${forms ? forms.total7 : '-'}</td><td>${forms ? forms.total30 : '-'}</td><td>${seo == null ? '-' : seo}</td><td>${flags.length ? esc(flags.join(', ')) : 'OK'}</td></tr>`;
-  }).join('');
-  return `<div style="font-family:Figtree,Segoe UI,Helvetica,Arial,sans-serif;color:#14211b">
-<h2 style="margin:0 0 6px">Weekly site report</h2><p style="margin:0 0 16px;color:#5d6f67">${sites.length} site${sites.length === 1 ? '' : 's'} · week ending ${new Date(now).toUTCString().slice(0, 16)}</p>
-<table cellpadding="8" style="border-collapse:collapse;font-size:14px;width:100%"><thead><tr style="text-align:left;color:#5d6f67;font-size:12px;text-transform:uppercase"><th>Site</th><th>Uptime 7d</th><th>Forms 7d</th><th>Forms 30d</th><th>SEO issues</th><th>Flags</th></tr></thead><tbody>${rows}</tbody></table>
-<p style="margin-top:18px"><a href="${appUrl()}/app">Open Flowdeck</a></p></div>`;
+  return emails.digest(user, sites, now).html;
 }
 
 // Progress is kept per user and per week, so a timeout or an error never skips anyone: a later run
@@ -203,7 +190,8 @@ async function runDigest(now, force) {
       if (!sites.length) { await store.markDigestDone(day, uid); continue; }
       for (const s of sites) s._checks = await store.recentChecks(s.id);
       try {
-        await email.send({ to, subject: `[Flowdeck] Weekly report: ${sites.length} site${sites.length === 1 ? '' : 's'}`, html: digestHtml(user, sites, now), text: sites.map((s) => s.name + ': ' + (s.status && s.status.up === false ? 'DOWN' : 'ok')).join('\n') });
+        const msg = emails.digest(user, sites, now, { to });
+        await email.send({ to, subject: msg.subject, html: msg.html, text: msg.text });
         await store.markDigestDone(day, uid);
         sent++;
       } catch (e) { failed++; console.error('[digest]', e.message); }
@@ -213,8 +201,5 @@ async function runDigest(now, force) {
   }
   return { sent, pending, failed };
 }
-
-function appUrl() { return (process.env.APP_URL || '').replace(/\/+$/, ''); }
-function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
 module.exports = { runChecks, runSync, runDigest, digestHtml, mapLimit };

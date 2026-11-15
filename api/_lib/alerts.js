@@ -3,30 +3,19 @@
 // when a problem starts and once when it ends.
 const store = require('./store');
 const email = require('./email');
+const emails = require('./emails');
 const { unpublishedDays, DAY } = require('./sync');
 
-const RULES = {
-  down: {
-    title: (s) => `${s.name} is down`,
-    body: (s, d) => `${s.url} failed ${d.fails} checks in a row (last status ${d.code || 'no response'}${d.error ? ', ' + d.error : ''}).`,
-    recovered: (s) => `${s.name} is back up`
-  },
-  ssl: {
-    title: (s, d) => `SSL certificate on ${s.name} expires in ${d.days} days`,
-    body: (s, d) => `The certificate for ${s.url} expires on ${new Date(d.expiresAt).toUTCString()}. Webflow renews automatically for Webflow-hosted domains; check DNS if this keeps showing.`,
-    recovered: (s) => `SSL certificate on ${s.name} renewed`
-  },
-  unpublished: {
-    title: (s, d) => `${s.name} has unpublished changes for ${d.days} days`,
-    body: (s) => `Changes in the Designer have not been published since ${s.lastPublished ? new Date(s.lastPublished).toUTCString() : 'never'}. Publish the site or discard the changes.`,
-    recovered: (s) => `${s.name} was published`
-  },
-  forms_silent: {
-    title: (s) => `No form submissions on ${s.name} for 30 days`,
-    body: (s, d) => `${s.name} received ${d.before} submissions in the 30 days before that, and none since. Check that the form still works and notifications still arrive.`,
-    recovered: (s) => `${s.name} is receiving form submissions again`
-  }
-};
+// The rule types. The words of each email (subject, first line, button, details) live in emails.js;
+// these keep their old shape for anything that reads them: subject line, first line, recovery subject.
+const RULES = {};
+for (const type of ['down', 'ssl', 'unpublished', 'forms_silent']) {
+  RULES[type] = {
+    title: (s, d) => emails.alertOpened(s, type, d).subject,
+    body: (s, d) => emails.alertOpened(s, type, d).lead,
+    recovered: (s, state) => emails.alertResolved(s, type, state).subject
+  };
+}
 
 function evaluate(site, now) {
   now = now || Date.now();
@@ -56,7 +45,6 @@ async function processSite(site, user, now, types) {
   const own = (types || Object.keys(RULES)).filter((t) => RULES[t]);
   const { states, fails } = await store.getAlertStates(site.id, own); // one read for all rules
   for (const type of own) {
-    const rule = RULES[type];
     const state = states[type];
     const active = !!found[type];
     const fail = fails[type];
@@ -65,10 +53,9 @@ async function processSite(site, user, now, types) {
       const t = now || Date.now();
       if (to) {
         if (fail && fail.until > t) { sent.push({ type, state: 'waiting' }); continue; }
-        const subject = rule.title(site, found[type]);
-        const body = rule.body(site, found[type]);
         try {
-          await email.send({ to, subject: '[Flowdeck] ' + subject, text: body + '\n\nOpen Flowdeck: ' + appUrl() + '/app/site?id=' + site.id, html: `<p>${esc(body)}</p><p><a href="${appUrl()}/app/site?id=${site.id}">Open in Flowdeck</a></p>` });
+          const msg = emails.alertOpened(site, type, found[type], { now: t, to });
+          await email.send({ to, subject: msg.subject, html: msg.html, text: msg.text });
         } catch (e) {
           // Not recorded as sent, so a failed email never hides an outage. A temporary problem
           // (rate limit, server error, network) is retried on the next run; an email the service
@@ -90,7 +77,8 @@ async function processSite(site, user, now, types) {
       await store.clearAlert(site.id, type);
       if (to) {
         try {
-          await email.send({ to, subject: '[Flowdeck] ' + rule.recovered(site), text: rule.recovered(site) + '.', html: `<p>${esc(rule.recovered(site))}.</p>` });
+          const msg = emails.alertResolved(site, type, state, { now: now || Date.now(), to });
+          await email.send({ to, subject: msg.subject, html: msg.html, text: msg.text });
         } catch (e) { console.error('[alert email]', e.message); }
       }
       sent.push({ type, state: 'closed' });
@@ -98,8 +86,5 @@ async function processSite(site, user, now, types) {
   }
   return sent;
 }
-
-function appUrl() { return (process.env.APP_URL || '').replace(/\/+$/, ''); }
-function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
 module.exports = { RULES, evaluate, process: processSite };
